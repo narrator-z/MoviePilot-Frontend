@@ -352,7 +352,7 @@ onBeforeUnmount(() => {
                         <code class="truncate">{{ systemEnv.VERSION }}</code>
                         <a
                           v-if="latestRelease === systemEnv.VERSION"
-                          href="https://github.com/jxxghp/MoviePilot/releases"
+                          href="https://github.com/narrator-z/MoviePilot/releases"
                           target="_blank"
                           rel="noopener noreferrer"
                         >
@@ -524,12 +524,12 @@ onBeforeUnmount(() => {
                     <dd class="flex text-sm sm:col-span-2 sm:mt-0">
                       <span class="flex-grow break-all">
                         <a
-                          href="https://github.com/jxxghp/MoviePilot/issues/new/choose"
+                          href="https://github.com/narrator-z/MoviePilot/issues/new/choose"
                           target="_blank"
                           rel="noreferrer"
                           class="text-indigo-500 transition duration-300 hover:underline"
                         >
-                          https://github.com/jxxghp/MoviePilot/issues/new/choose
+                          https://github.com/narrator-z/MoviePilot/issues/new/choose
                         </a>
                       </span>
                     </dd>

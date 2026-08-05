@@ -2990,10 +2990,10 @@ export default {
     pluginMarketSetting: {
       title: '插件市場設置',
       repoUrl: '插件倉庫地址',
-      repoPlaceholder: '格式：https://github.com/jxxghp/MoviePilot-Plugins/,https://github.com/xxxx/xxxxxx/',
+      repoPlaceholder: '格式：https://github.com/narrator-z/MoviePilot-Plugins/,https://github.com/xxxx/xxxxxx/',
       repoHint: '多個地址可使用換行或英文逗號分隔',
       urlPlaceholder: '輸入插件倉庫地址',
-      textPlaceholder: 'https://github.com/jxxghp/MoviePilot-Plugins/\nhttps://github.com/xxxx/xxxxxx/',
+      textPlaceholder: 'https://github.com/narrator-z/MoviePilot-Plugins/\nhttps://github.com/xxxx/xxxxxx/',
       repoCountHint: '目前已維護 {count} 個插件倉庫地址',
       listMode: '列表維護',
       textMode: '文字維護',

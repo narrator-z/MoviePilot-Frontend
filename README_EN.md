@@ -2,7 +2,7 @@
 
 *[中文](README.md) | English*
 
-Frontend project for [MoviePilot](https://github.com/jxxghp/MoviePilot), NodeJS version required: >= `v20.12.1`.
+Frontend project for [MoviePilot](https://github.com/narrator-z/MoviePilot), NodeJS version required: >= `v20.12.1`.
 
 ## Features
 

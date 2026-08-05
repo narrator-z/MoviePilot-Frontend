@@ -83,7 +83,7 @@ api.interceptors.response.use(
     globalOfflineStatus.markServerOnline()
     return normalizeLocalizedMessage(response.data)
   },
-  (error: AxiosError) => {
+  async (error: AxiosError) => {
     if (!error.response) {
       const requestConfig = error.config as ConnectionAwareRequestConfig | undefined
       const failureReason = resolveConnectionFailureReason(error)
@@ -105,14 +105,34 @@ api.interceptors.response.use(
       }
       // 其他网络错误
       return Promise.reject(new Error(error.message || 'Network error'))
-    } else if (error.response.status === 403) {
+    } else if (error.response.status === 401 || error.response.status === 403) {
+      // 认证失败（Bearer 过期/旧密钥/失效）。后端 verify_token 在 Bearer 失效时会用
+      // 资源令牌 Cookie 兜底保住会话，因此此处不直接登出，而是静默重试一次：
+      // 临时清除本地过期 Bearer，让重试请求不带 Authorization 头，后端纯用 Cookie 兜底返回 200。
       normalizeLocalizedMessage(error.response.data)
-      // 认证 Store
       const authStore = useAuthStore()
-      // 清除登录状态信息
-      authStore.logout()
-      // token验证失败，跳转到登录页面
-      router.push('/login')
+      const originalConfig = error.config as ConnectionAwareRequestConfig | undefined
+      // 避免对刷新请求自身递归重试
+      if (originalConfig && !(originalConfig as any).__authRetried) {
+        authStore.clearToken()
+        const retryConfig = { ...originalConfig, __authRetried: true }
+        try {
+          const retryResp = await api(retryConfig)
+          return normalizeLocalizedMessage(retryResp.data)
+        } catch (retryErr) {
+          // 重试仍失败（无有效 Cookie / 未登录），才真正登出
+          if ((retryErr as AxiosError)?.response?.status === 401 ||
+              (retryErr as AxiosError)?.response?.status === 403) {
+            authStore.logout()
+            router.push('/login')
+          }
+          return Promise.reject(retryErr)
+        }
+      } else {
+        // 已经重试过仍失败，强制登出
+        authStore.logout()
+        router.push('/login')
+      }
     } else {
       normalizeLocalizedMessage(error.response.data)
     }

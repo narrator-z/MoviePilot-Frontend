@@ -2991,10 +2991,10 @@ export default {
     pluginMarketSetting: {
       title: '插件市场设置',
       repoUrl: '插件仓库地址',
-      repoPlaceholder: '格式：https://github.com/jxxghp/MoviePilot-Plugins/,https://github.com/xxxx/xxxxxx/',
+      repoPlaceholder: '格式：https://github.com/narrator-z/MoviePilot-Plugins/,https://github.com/xxxx/xxxxxx/',
       repoHint: '多个地址可使用换行或英文逗号分隔',
       urlPlaceholder: '输入插件仓库地址',
-      textPlaceholder: 'https://github.com/jxxghp/MoviePilot-Plugins/\nhttps://github.com/xxxx/xxxxxx/',
+      textPlaceholder: 'https://github.com/narrator-z/MoviePilot-Plugins/\nhttps://github.com/xxxx/xxxxxx/',
       repoCountHint: '当前已维护 {count} 个插件仓库地址',
       listMode: '列表维护',
       textMode: '文本维护',
