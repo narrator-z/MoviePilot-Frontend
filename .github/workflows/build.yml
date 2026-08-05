@@ -30,7 +30,7 @@ jobs:
       - name: Download Icons
         run: |
           pwd
-          curl -sL "https://github.com/narrator-z/MoviePilot-Plugins/archive/refs/heads/main.zip" | busybox unzip -d /tmp -
+          curl -sL "https://github.com/jxxghp/MoviePilot-Plugins/archive/refs/heads/main.zip" | busybox unzip -d /tmp -
           mv /tmp/MoviePilot-Plugins-main/icons public/plugin_icon
           rm -rf /tmp/MoviePilot-Plugins-main
 
