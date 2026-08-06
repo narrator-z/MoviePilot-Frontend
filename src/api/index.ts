@@ -64,7 +64,8 @@ interface LocalizedApiPayload {
 }
 
 /** 前端展示默认使用后端提供的多语言消息，同时不改变后端接口兼容字段。 */
-function normalizeLocalizedMessage(payload: unknown) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeLocalizedMessage(payload: unknown): any {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload
 
   const localizedPayload = payload as LocalizedApiPayload
@@ -82,8 +83,7 @@ api.interceptors.response.use(
   response => {
     // 任意 API 成功响应都可以证明 MoviePilot 服务当前可达。
     globalOfflineStatus.markServerOnline()
-    response.data = normalizeLocalizedMessage(response.data)
-    return response
+    return normalizeLocalizedMessage(response.data)
   },
   async (error: AxiosError) => {
     if (!error.response) {
