@@ -72,11 +72,6 @@
       "count": 9
     }
   },
-  "src/api/index.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
   "src/api/types.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 39
