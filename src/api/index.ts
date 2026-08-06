@@ -118,7 +118,8 @@ api.interceptors.response.use(
         const retryConfig = { ...originalConfig, __authRetried: true }
         try {
           const retryResp = await api(retryConfig)
-          return normalizeLocalizedMessage(retryResp.data)
+          // 响应拦截器已将 data 归一化，retryResp 即最终 data
+          return retryResp
         } catch (retryErr) {
           // 重试仍失败（无有效 Cookie / 未登录），才真正登出
           if ((retryErr as AxiosError)?.response?.status === 401 ||
