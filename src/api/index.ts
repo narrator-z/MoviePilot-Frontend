@@ -12,6 +12,7 @@ const api = axios.create({
 
 export interface ConnectionAwareRequestConfig extends AxiosRequestConfig {
   skipConnectionTracking?: boolean
+  __authRetried?: boolean
 }
 
 // 声明全局变量类型
@@ -63,7 +64,7 @@ interface LocalizedApiPayload {
 }
 
 /** 前端展示默认使用后端提供的多语言消息，同时不改变后端接口兼容字段。 */
-function normalizeLocalizedMessage(payload: any): any {
+function normalizeLocalizedMessage(payload: unknown) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload
 
   const localizedPayload = payload as LocalizedApiPayload
@@ -81,7 +82,8 @@ api.interceptors.response.use(
   response => {
     // 任意 API 成功响应都可以证明 MoviePilot 服务当前可达。
     globalOfflineStatus.markServerOnline()
-    return normalizeLocalizedMessage(response.data)
+    response.data = normalizeLocalizedMessage(response.data)
+    return response
   },
   async (error: AxiosError) => {
     if (!error.response) {
@@ -113,7 +115,7 @@ api.interceptors.response.use(
       const authStore = useAuthStore()
       const originalConfig = error.config as ConnectionAwareRequestConfig | undefined
       // 避免对刷新请求自身递归重试
-      if (originalConfig && !(originalConfig as any).__authRetried) {
+      if (originalConfig && !originalConfig.__authRetried) {
         authStore.clearToken()
         const retryConfig = { ...originalConfig, __authRetried: true }
         try {
