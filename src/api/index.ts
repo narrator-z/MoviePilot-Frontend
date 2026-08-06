@@ -64,8 +64,7 @@ interface LocalizedApiPayload {
 }
 
 /** 前端展示默认使用后端提供的多语言消息，同时不改变后端接口兼容字段。 */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function normalizeLocalizedMessage(payload: unknown): any {
+function normalizeLocalizedMessage(payload: any): any {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload
 
   const localizedPayload = payload as LocalizedApiPayload
@@ -108,13 +107,12 @@ api.interceptors.response.use(
       // 其他网络错误
       return Promise.reject(new Error(error.message || 'Network error'))
     } else if (error.response.status === 401 || error.response.status === 403) {
-      // 认证失败（Bearer 过期/旧密钥/失效）。后端 verify_token 在 Bearer 失效时会用
-      // 资源令牌 Cookie 兜底保住会话，因此此处不直接登出，而是静默重试一次：
-      // 临时清除本地过期 Bearer，让重试请求不带 Authorization 头，后端纯用 Cookie 兜底返回 200。
+      // Bearer 失效（过期/旧密钥）。后端 verify_token 会用资源令牌 Cookie 兜底保住会话，
+      // 因此此处不直接登出，而是静默清除本地过期 Bearer 并重试一次：
+      // 重试请求不带 Authorization 头，后端纯用 Cookie 兜底返回 200。
       normalizeLocalizedMessage(error.response.data)
       const authStore = useAuthStore()
       const originalConfig = error.config as ConnectionAwareRequestConfig | undefined
-      // 避免对刷新请求自身递归重试
       if (originalConfig && !originalConfig.__authRetried) {
         authStore.clearToken()
         const retryConfig = { ...originalConfig, __authRetried: true }
