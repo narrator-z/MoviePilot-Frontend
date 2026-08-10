@@ -8,6 +8,10 @@ import { getCurrentLocale } from '@/plugins/i18n'
 // 创建axios实例
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL,
+  // 允许浏览器在同源 API 请求中自动携带资源令牌 Cookie（MoviePilot），
+  // 使后端 verify_token 的资源 Cookie 兜底机制真正生效：Bearer 失效时
+  // 仅靠 Cookie 即可保住会话，避免插件页在 HTTPS 下被误判未登录而强制登出。
+  withCredentials: true,
 })
 
 export interface ConnectionAwareRequestConfig extends AxiosRequestConfig {
