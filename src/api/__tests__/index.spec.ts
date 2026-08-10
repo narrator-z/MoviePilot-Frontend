@@ -61,7 +61,7 @@ afterEach(() => {
   api.defaults.adapter = undefined
 })
 
-describe('api response interceptor - auth retry on 401/403', () => {
+describe('api response interceptor - 401 triggers auth retry/logout, 403 does not', () => {
   it('clears expired bearer and retries once on 401, cookie-backed success', async () => {
     const handlers = (api.interceptors.response as unknown as { handlers: Array<{ rejected?: (e: AxiosError) => Promise<unknown> }> }).handlers
     const rejected = handlers[handlers.length - 1].rejected
@@ -98,7 +98,7 @@ describe('api response interceptor - auth retry on 401/403', () => {
     expect(mocks.pushMock).toHaveBeenCalledWith('/login')
   })
 
-  it('forces logout directly on 403 when retry already happened', async () => {
+  it('does not logout on 403 when retry already happened (edge/WAF rejection is not an auth failure)', async () => {
     const handlers = (api.interceptors.response as unknown as { handlers: Array<{ rejected?: (e: AxiosError) => Promise<unknown> }> }).handlers
     const rejected = handlers[handlers.length - 1].rejected!
 
@@ -108,8 +108,24 @@ describe('api response interceptor - auth retry on 401/403', () => {
     })
 
     await expect(rejected(err)).rejects.toBeTruthy()
-    expect(mocks.logoutMock).toHaveBeenCalled()
-    expect(mocks.pushMock).toHaveBeenCalledWith('/login')
+    expect(mocks.logoutMock).not.toHaveBeenCalled()
+    expect(mocks.pushMock).not.toHaveBeenCalled()
+    expect(mocks.clearTokenMock).not.toHaveBeenCalled()
+  })
+
+  it('does not retry or logout on first-time 403 (Cloudflare edge 403 must not kick the session)', async () => {
+    const handlers = (api.interceptors.response as unknown as { handlers: Array<{ rejected?: (e: AxiosError) => Promise<unknown> }> }).handlers
+    const rejected = handlers[handlers.length - 1].rejected!
+
+    const err = makeError({
+      config: { headers: {} },
+      response: { status: 403, data: { detail: 'forbidden' } },
+    })
+
+    await expect(rejected(err)).rejects.toBeTruthy()
+    expect(mocks.clearTokenMock).not.toHaveBeenCalled()
+    expect(mocks.logoutMock).not.toHaveBeenCalled()
+    expect(mocks.pushMock).not.toHaveBeenCalled()
   })
 
   it('does not retry again when already retried', async () => {
