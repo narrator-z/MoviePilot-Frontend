@@ -110,8 +110,8 @@ api.interceptors.response.use(
       }
       // 其他网络错误
       return Promise.reject(new Error(error.message || 'Network error'))
-    } else if (error.response.status === 401 || error.response.status === 403) {
-      // Bearer 失效（过期/旧密钥）。后端 verify_token 会用资源令牌 Cookie 兜底保住会话，
+    } else if (error.response.status === 401) {
+      // Bearer 缺失/失效（过期/旧密钥）：后端 verify_token 会用资源令牌 Cookie 兜底保住会话，
       // 因此此处不直接登出，而是静默清除本地过期 Bearer 并重试一次：
       // 重试请求不带 Authorization 头，后端纯用 Cookie 兜底返回 200。
       normalizeLocalizedMessage(error.response.data)
@@ -126,8 +126,7 @@ api.interceptors.response.use(
           return retryResp
         } catch (retryErr) {
           // 重试仍失败（无有效 Cookie / 未登录），才真正登出
-          if ((retryErr as AxiosError)?.response?.status === 401 ||
-              (retryErr as AxiosError)?.response?.status === 403) {
+          if ((retryErr as AxiosError)?.response?.status === 401) {
             authStore.logout()
             router.push('/login')
           }
@@ -138,6 +137,11 @@ api.interceptors.response.use(
         authStore.logout()
         router.push('/login')
       }
+    } else if (error.response.status === 403) {
+      // fork 后端已将全部认证失败统一为 401（用户不存在、令牌校验不通过等），
+      // 因此 403 仅来自边缘 WAF（如 Cloudflare）或安全拒绝（路径穿越/非文件），
+      // 二者均非登录态失效，不应触发强制登出，仅拒绝请求即可，避免被误判未登录。
+      normalizeLocalizedMessage(error.response.data)
     } else {
       normalizeLocalizedMessage(error.response.data)
     }
