@@ -695,6 +695,7 @@ onMounted(() => {
 })
 
 onActivated(() => {
+  mobileSelectedFilterValue.value = ALL_MOBILE_FILTER_VALUE
   if (!loading.value) {
     getSubscribes()
   }
