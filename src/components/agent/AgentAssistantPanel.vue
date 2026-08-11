@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import MarkdownIt from 'markdown-it'
-import mdLinkAttributes from 'markdown-it-link-attributes'
 import { useDisplay } from 'vuetify'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore, useUserStore } from '@/stores'
 import { getCurrentLocale } from '@/plugins/i18n'
+import { AGENT_ASSISTANT_LAYER_Z_INDEX } from '@/constants/agentAssistant'
+import AgentMarkdownContent from './AgentMarkdownContent.vue'
 
 type AgentMessageRole = 'user' | 'assistant'
 type AgentMessageStatus = 'idle' | 'streaming' | 'done' | 'error'
@@ -18,6 +18,21 @@ interface AgentToolCall {
   message: string
   status: 'running' | 'done'
 }
+
+interface AgentMessageTextSegment {
+  type: 'text'
+  content: string
+}
+
+interface AgentMessageToolSegment {
+  type: 'tool'
+  toolIndex: number
+}
+
+type AgentMessageSegment = AgentMessageTextSegment | AgentMessageToolSegment
+
+type AgentRenderableMessageSegment =
+  (AgentMessageTextSegment & { key: string }) | { type: 'tool'; key: string; tool: AgentToolCall }
 
 interface AgentMessageAttachment {
   kind: AgentAttachmentKind
@@ -65,6 +80,7 @@ interface AgentChatMessage {
   createdAt: number
   status: AgentMessageStatus
   tools: AgentToolCall[]
+  segments: AgentMessageSegment[]
   attachments: AgentMessageAttachment[]
   choices: AgentChoiceCard[]
   choice_selection?: AgentChoiceSelection
@@ -198,6 +214,7 @@ const messages = ref<AgentChatMessage[]>([])
 const historySessions = ref<AgentSessionHistoryItem[]>([])
 const sessionId = ref('')
 const sending = ref(false)
+const isComposing = ref(false)
 const streamError = ref('')
 const historyMenuOpen = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
@@ -223,24 +240,15 @@ let recordingChunks: BlobPart[] = []
 let messageScrollFrame: number | null = null
 let pendingMessageScrollToBottom = false
 let streamPersistTimer: number | null = null
+let streamPersistLastRunAt = 0
+let messageScrollerShouldFollow = true
+let streamDeltaFrame: number | null = null
+let pendingStreamDelta = ''
+let pendingStreamDeltaMessage: AgentChatMessage | null = null
 let userAbortRequested = false
 let streamRecoveryAbortRequested = false
 let streamRecoveryTimer: number | null = null
 let activeStreamStartedAt = 0
-
-const md = new MarkdownIt({
-  html: true,
-  breaks: true,
-  linkify: true,
-  typographer: true,
-})
-
-md.use(mdLinkAttributes, {
-  attrs: {
-    target: '_blank',
-    rel: 'noopener noreferrer',
-  },
-})
 
 // 汇总实时请求与后台恢复状态，保证恢复期间仍展示处理中并锁定会话操作。
 const isBusy = computed(() => sending.value || Boolean(pendingStreamRecovery.value))
@@ -296,6 +304,7 @@ const isOpen = computed({
 })
 const drawerStyle = computed(() => ({
   '--agent-assistant-panel-width': drawerWidth.value,
+  zIndex: AGENT_ASSISTANT_LAYER_Z_INDEX.panel,
 }))
 
 // 创建前端展示用的临时 ID。
@@ -515,26 +524,57 @@ function normalizeChoiceSelectionMessages(sessionMessages: AgentChatMessage[]) {
   return sessionMessages
 }
 
-// 规范化历史消息，补齐附件、工具和选择项等可选数组。
+// 规范化消息的有序片段；旧历史按原来的工具在前、文本在后布局回退。
+function normalizeMessageSegments(value: unknown, content: string, tools: AgentToolCall[]) {
+  const normalizedSegments: AgentMessageSegment[] = []
+
+  if (Array.isArray(value)) {
+    value.forEach(rawSegment => {
+      if (!rawSegment || typeof rawSegment !== 'object' || Array.isArray(rawSegment)) return
+
+      const segment = rawSegment as Record<string, unknown>
+      if (segment.type === 'text' && typeof segment.content === 'string' && segment.content.trim()) {
+        normalizedSegments.push({ type: 'text', content: segment.content })
+        return
+      }
+
+      const toolIndex = Number(segment.toolIndex ?? segment.tool_index)
+      if (segment.type === 'tool' && Number.isInteger(toolIndex) && toolIndex >= 0 && toolIndex < tools.length) {
+        normalizedSegments.push({ type: 'tool', toolIndex })
+      }
+    })
+  }
+
+  if (normalizedSegments.length) return normalizedSegments
+
+  tools.forEach((_tool, toolIndex) => normalizedSegments.push({ type: 'tool', toolIndex }))
+  if (content.trim()) normalizedSegments.push({ type: 'text', content })
+  return normalizedSegments
+}
+
+// 规范化历史消息，补齐附件、工具、有序片段和选择项等可选数组。
 function normalizeStoredMessages(value: unknown) {
   if (!Array.isArray(value)) return []
 
   const normalizedMessages = value.slice(-MAX_PERSISTED_MESSAGES).map(rawMessage => {
     const message = rawMessage && typeof rawMessage === 'object' ? (rawMessage as Record<string, unknown>) : {}
     const role = message.role === 'assistant' ? 'assistant' : 'user'
+    const content = typeof message.content === 'string' ? message.content : stringifyChoiceField(message.content)
+    const tools = Array.isArray(message.tools) ? (message.tools as AgentToolCall[]) : []
 
     return {
       ...message,
       id: stringifyChoiceField(message.id) || createId(role),
       role,
-      content: typeof message.content === 'string' ? message.content : stringifyChoiceField(message.content),
+      content,
       createdAt: Number(message.createdAt) || Number(message.created_at) || Date.now(),
       status: normalizeMessageStatus(message.status),
       attachments: Array.isArray(message.attachments) ? message.attachments : [],
       choices: Array.isArray(message.choices)
         ? (message.choices.map(normalizeChoiceCard).filter(Boolean) as AgentChoiceCard[])
         : [],
-      tools: Array.isArray(message.tools) ? message.tools : [],
+      tools,
+      segments: normalizeMessageSegments(message.segments, content, tools),
       choice_selection: normalizeChoiceSelection(message.choice_selection || message.choiceSelection),
     } as AgentChatMessage
   })
@@ -811,7 +851,7 @@ function failStreamRecovery() {
     .find(message => message.role === 'assistant' && message.status === 'streaming')
   if (assistantMessage) {
     assistantMessage.status = 'error'
-    assistantMessage.content ||= t('agentAssistant.recoveryFailed')
+    if (!assistantMessage.content) appendAssistantTextSegment(assistantMessage, t('agentAssistant.recoveryFailed'))
     markToolsDone(assistantMessage)
     refreshMessageList()
   } else {
@@ -1056,12 +1096,6 @@ function persistState(options: { syncHistory?: boolean } = {}) {
   if (syncHistory) upsertCurrentSessionHistory()
 }
 
-// 渲染助手消息中的 Markdown 文本。
-function renderMarkdown(value: string) {
-  if (!value) return ''
-  return md.render(value)
-}
-
 // 拼接后端 API 地址。
 function resolveApiUrl(path: string) {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || '/'
@@ -1106,6 +1140,11 @@ function isMessageScrollerNearBottom() {
   return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= MESSAGE_SCROLL_FOLLOW_THRESHOLD
 }
 
+// 只在滚动事件中更新自动跟随意图，避免每个流式事件触发布局读取。
+function handleMessageScrollerScroll() {
+  messageScrollerShouldFollow = isMessageScrollerNearBottom()
+}
+
 // 合并滚动更新请求，降低流式输出时的布局测量频率。
 function scheduleMessageScrollerUpdate(options: { toBottom?: boolean } = {}) {
   const { toBottom = false } = options
@@ -1125,6 +1164,7 @@ function scheduleMessageScrollerUpdate(options: { toBottom?: boolean } = {}) {
 // 将消息列表滚动到底部。
 function scrollToBottom(options: { smooth?: boolean } = {}) {
   const { smooth = false } = options
+  messageScrollerShouldFollow = true
   nextTick(() => {
     const scroller = getMessageScrollerElement()
     if (!scroller) return
@@ -1168,13 +1208,17 @@ function clearMessageScrollFrame() {
   pendingMessageScrollToBottom = false
 }
 
-// 延迟持久化流式消息，避免每个 token 都写入本地存储。
+// 流式期间至多每秒保存一次轻量当前态，终态再同步完整历史。
 function scheduleStreamPersist() {
-  clearStreamPersistTimer()
+  if (streamPersistTimer !== null) return
+
+  const elapsed = Date.now() - streamPersistLastRunAt
+  const delay = Math.max(0, STREAM_STATE_PERSIST_DELAY - elapsed)
   streamPersistTimer = window.setTimeout(() => {
-    persistState()
     streamPersistTimer = null
-  }, STREAM_STATE_PERSIST_DELAY)
+    streamPersistLastRunAt = Date.now()
+    persistState({ syncHistory: false })
+  }, delay)
 }
 
 // 同步输入框高度，使多行输入不撑破底部布局。
@@ -1210,6 +1254,7 @@ function addMessage(
     attachments,
     choices: [],
     tools: [],
+    segments: role === 'assistant' && content ? [{ type: 'text', content }] : [],
     choice_selection: choiceSelection,
   }
   messages.value.push(message)
@@ -1225,6 +1270,45 @@ function normalizeToolMessage(message: string) {
   return message.replace(/^=>\s*/, '').trim()
 }
 
+// 解析非啰嗦模式的工具汇总，供相邻工具状态按类别累计次数。
+function parseToolSummary(message: string) {
+  const summaryMatch = message.match(/^（(.+)）$/)
+  if (!summaryMatch) return null
+
+  const parts = summaryMatch[1].split('，').map(part => {
+    const countMatch = part.trim().match(/^(.*?\D)(\d+)(\D.*)$/)
+    if (!countMatch) return null
+    return {
+      prefix: countMatch[1],
+      count: Number(countMatch[2]),
+      suffix: countMatch[3],
+    }
+  })
+  return parts.every(Boolean) ? (parts as Array<{ prefix: string; count: number; suffix: string }>) : null
+}
+
+// 仅合并相邻的非啰嗦工具汇总；正文或具体工具提示会自然终止当前聚合组。
+function mergeToolSummaries(currentMessage: string, nextMessage: string) {
+  const currentParts = parseToolSummary(currentMessage)
+  const nextParts = parseToolSummary(nextMessage)
+  if (!currentParts || !nextParts) return null
+
+  const mergedParts = currentParts.map(part => ({ ...part }))
+  const partIndexes = new Map(mergedParts.map((part, index) => [`${part.prefix}\u0000${part.suffix}`, index]))
+  nextParts.forEach(part => {
+    const key = `${part.prefix}\u0000${part.suffix}`
+    const existingIndex = partIndexes.get(key)
+    if (existingIndex === undefined) {
+      partIndexes.set(key, mergedParts.length)
+      mergedParts.push({ ...part })
+      return
+    }
+    mergedParts[existingIndex].count += part.count
+  })
+
+  return `（${mergedParts.map(part => `${part.prefix}${part.count}${part.suffix}`).join('，')}）`
+}
+
 // 将当前消息里的运行中工具标记为完成。
 function markToolsDone(message: AgentChatMessage) {
   message.tools.forEach(tool => {
@@ -1232,11 +1316,58 @@ function markToolsDone(message: AgentChatMessage) {
   })
 }
 
+// 追加助手文本，并只合并紧邻的文本片段以保留工具事件边界。
+function appendAssistantTextSegment(message: AgentChatMessage, content: string) {
+  if (!content) return
+
+  message.content += content
+  const lastSegment = message.segments.at(-1)
+  if (lastSegment?.type === 'text') {
+    lastSegment.content += content
+  } else if (content.trim()) {
+    message.segments.push({ type: 'text', content })
+  }
+}
+
+// 替换助手文本但保留工具片段，用于无法继续流式处理时显示错误。
+function replaceAssistantTextSegments(message: AgentChatMessage, content: string) {
+  message.content = content
+  message.segments = message.segments.filter(segment => segment.type === 'tool')
+  if (content.trim()) message.segments.push({ type: 'text', content })
+}
+
+// 按 SSE 事件顺序渲染文本与工具，只跳过无法产生可见内容的空白文本。
+function getRenderableMessageSegments(message: AgentChatMessage): AgentRenderableMessageSegment[] {
+  return message.segments.reduce<AgentRenderableMessageSegment[]>((renderableSegments, segment, index) => {
+    if (segment.type === 'text') {
+      if (segment.content.trim()) renderableSegments.push({ ...segment, key: `text-${index}` })
+      return renderableSegments
+    }
+
+    const tool = message.tools[segment.toolIndex]
+    if (tool) {
+      const previousSegment = renderableSegments.at(-1)
+      const mergedMessage =
+        previousSegment?.type === 'tool' ? mergeToolSummaries(previousSegment.tool.message, tool.message) : null
+      if (previousSegment?.type === 'tool' && mergedMessage) {
+        previousSegment.tool = {
+          ...previousSegment.tool,
+          message: mergedMessage,
+          status: previousSegment.tool.status === 'running' || tool.status === 'running' ? 'running' : 'done',
+        }
+      } else {
+        renderableSegments.push({ type: 'tool', key: `tool-${tool.id}`, tool })
+      }
+    }
+    return renderableSegments
+  }, [])
+}
+
 // 判断消息是否没有任何可展示内容，可用于清理编辑回调产生的占位回复。
 function isEmptyAssistantMessage(message: AgentChatMessage) {
   return (
     message.role === 'assistant' &&
-    !message.content &&
+    !message.content.trim() &&
     message.attachments.length === 0 &&
     message.choices.length === 0 &&
     message.tools.length === 0
@@ -1255,6 +1386,7 @@ function applyMessageUpdate(event: AgentStreamEvent) {
   message.content = typeof target?.content === 'string' ? target.content : ''
   message.attachments = Array.isArray(target?.attachments) ? target.attachments : []
   message.tools = Array.isArray(target?.tools) ? target.tools : []
+  message.segments = normalizeMessageSegments(target?.segments, message.content, message.tools)
   message.choices = Array.isArray(target?.choices)
     ? (target.choices.map(normalizeChoiceCard).filter(Boolean) as AgentChoiceCard[])
     : []
@@ -1266,11 +1398,9 @@ function applyMessageUpdate(event: AgentStreamEvent) {
 
 // 将单个 SSE 事件应用到正在流式输出的助手消息。
 function applyStreamEvent(event: AgentStreamEvent, assistantMessage: AgentChatMessage) {
-  const shouldFollowBottom = isMessageScrollerNearBottom()
-
   switch (event.type) {
     case 'delta':
-      assistantMessage.content += event.content || ''
+      appendAssistantTextSegment(assistantMessage, event.content || '')
       emit('assistant-preview', assistantMessage.content)
       break
     case 'tool':
@@ -1280,6 +1410,7 @@ function applyStreamEvent(event: AgentStreamEvent, assistantMessage: AgentChatMe
         message: normalizeToolMessage(event.message || ''),
         status: 'running',
       })
+      assistantMessage.segments.push({ type: 'tool', toolIndex: assistantMessage.tools.length - 1 })
       break
     case 'attachment':
       if (event.attachment?.url) {
@@ -1306,7 +1437,9 @@ function applyStreamEvent(event: AgentStreamEvent, assistantMessage: AgentChatMe
     case 'error':
       assistantMessage.status = 'error'
       // 后端流式错误已经以 AI 消息展示，避免底部提示条重复且持续占位。
-      assistantMessage.content ||= event.message_i18n || event.message || t('agentAssistant.error')
+      if (!assistantMessage.content) {
+        appendAssistantTextSegment(assistantMessage, event.message_i18n || event.message || t('agentAssistant.error'))
+      }
       emit('assistant-preview', assistantMessage.content)
       markToolsDone(assistantMessage)
       break
@@ -1322,8 +1455,52 @@ function applyStreamEvent(event: AgentStreamEvent, assistantMessage: AgentChatMe
 
   scheduleStreamPersist()
   nextTick(() => {
-    scheduleMessageScrollerUpdate({ toBottom: shouldFollowBottom })
+    scheduleMessageScrollerUpdate({ toBottom: messageScrollerShouldFollow })
   })
+}
+
+// 将同一条助手消息的连续文本增量合并到一个动画帧，语义事件到来前会同步冲刷。
+function flushPendingStreamDelta() {
+  if (streamDeltaFrame !== null) {
+    window.cancelAnimationFrame(streamDeltaFrame)
+    streamDeltaFrame = null
+  }
+  if (!pendingStreamDeltaMessage || !pendingStreamDelta) return
+
+  const assistantMessage = pendingStreamDeltaMessage
+  const content = pendingStreamDelta
+  pendingStreamDeltaMessage = null
+  pendingStreamDelta = ''
+  applyStreamEvent({ type: 'delta', content }, assistantMessage)
+}
+
+function clearPendingStreamDelta() {
+  if (streamDeltaFrame !== null) window.cancelAnimationFrame(streamDeltaFrame)
+  streamDeltaFrame = null
+  pendingStreamDeltaMessage = null
+  pendingStreamDelta = ''
+}
+
+function schedulePendingStreamDeltaFlush() {
+  if (streamDeltaFrame !== null) return
+
+  streamDeltaFrame = window.requestAnimationFrame(() => {
+    streamDeltaFrame = null
+    flushPendingStreamDelta()
+  })
+}
+
+function queueStreamEvent(event: AgentStreamEvent, assistantMessage: AgentChatMessage) {
+  if (event.type !== 'delta') {
+    flushPendingStreamDelta()
+    applyStreamEvent(event, assistantMessage)
+    return
+  }
+
+  if (pendingStreamDeltaMessage && pendingStreamDeltaMessage !== assistantMessage) flushPendingStreamDelta()
+  pendingStreamDeltaMessage = assistantMessage
+  pendingStreamDelta += event.content || ''
+  schedulePendingStreamDeltaFlush()
 }
 
 // 解析一个 SSE 数据块。
@@ -1353,26 +1530,30 @@ async function readAgentStream(response: Response, assistantMessage: AgentChatMe
   const consumeEvent = (event: AgentStreamEvent | null) => {
     if (!event) return
 
-    applyStreamEvent(event, assistantMessage)
+    queueStreamEvent(event, assistantMessage)
     if (event.type === 'done' || event.type === 'error') receivedTerminalEvent = true
   }
 
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
 
-    buffer += decoder.decode(value, { stream: true })
-    const blocks = buffer.split(/\n\n/)
-    buffer = blocks.pop() || ''
+      buffer += decoder.decode(value, { stream: true })
+      const blocks = buffer.split(/\r?\n\r?\n/)
+      buffer = blocks.pop() || ''
 
-    for (const block of blocks) {
-      consumeEvent(parseSseBlock(block))
+      for (const block of blocks) {
+        consumeEvent(parseSseBlock(block))
+      }
     }
-  }
 
-  buffer += decoder.decode()
-  if (buffer.trim()) {
-    consumeEvent(parseSseBlock(buffer))
+    buffer += decoder.decode()
+    if (buffer.trim()) {
+      consumeEvent(parseSseBlock(buffer))
+    }
+  } finally {
+    flushPendingStreamDelta()
   }
 
   return { receivedTerminalEvent }
@@ -1641,7 +1822,7 @@ async function streamAgentMessage(
     }
 
     assistantMessage.status = 'error'
-    assistantMessage.content = error?.message || t('agentAssistant.error')
+    replaceAssistantTextSegments(assistantMessage, error?.message || t('agentAssistant.error'))
     markToolsDone(assistantMessage)
     refreshMessageList()
   } finally {
@@ -2052,9 +2233,17 @@ function handlePageShow() {
 
 // 处理输入框回车发送。
 function handleInputKeydown(event: KeyboardEvent) {
-  if (event.key !== 'Enter' || event.shiftKey) return
+  if (event.key !== 'Enter' || event.shiftKey || isComposing.value || event.isComposing || event.keyCode === 229) return
   event.preventDefault()
   sendMessage()
+}
+
+function handleCompositionStart() {
+  isComposing.value = true
+}
+
+function handleCompositionEnd() {
+  isComposing.value = false
 }
 
 watch(isOpen, syncAgentAssistantOpenState, { immediate: true })
@@ -2084,6 +2273,7 @@ onScopeDispose(clearPendingAttachments)
 onScopeDispose(cancelVoiceRecording)
 onScopeDispose(clearMessageScrollFrame)
 onScopeDispose(clearStreamPersistTimer)
+onScopeDispose(clearPendingStreamDelta)
 onScopeDispose(clearStreamRecoveryTimer)
 onScopeDispose(() => {
   if (typeof window === 'undefined') return
@@ -2130,11 +2320,11 @@ onScopeDispose(() => {
           <VMenu
             v-model="historyMenuOpen"
             :close-on-content-click="false"
-            content-class="agent-assistant-history-overlay"
             location="bottom end"
             offset="8"
             max-width="360"
-            :z-index="2603"
+            :style="{ zIndex: AGENT_ASSISTANT_LAYER_Z_INDEX.overlay }"
+            :z-index="AGENT_ASSISTANT_LAYER_Z_INDEX.overlay"
           >
             <template #activator="{ props }">
               <IconBtn v-bind="props" :title="t('agentAssistant.history')" :aria-label="t('agentAssistant.history')">
@@ -2224,6 +2414,7 @@ onScopeDispose(() => {
         ref="messageListRef"
         class="agent-assistant-messages"
         :class="{ 'agent-assistant-messages--has-content': hasMessages }"
+        @scroll.passive="handleMessageScrollerScroll"
       >
         <div class="agent-assistant-messages__content">
           <div v-if="!hasMessages" class="agent-assistant-empty">
@@ -2245,31 +2436,41 @@ onScopeDispose(() => {
               <span>{{ message.role === 'user' ? currentUserName : t('agentAssistant.assistant') }}</span>
             </div>
 
-            <div v-if="message.tools.length" class="agent-assistant-tools">
-              <div v-for="tool in message.tools" :key="tool.id" class="agent-assistant-tool">
-                <VIcon
-                  :icon="
-                    tool.status === 'running' && message.status === 'streaming'
-                      ? 'line-md:loading-twotone-loop'
-                      : 'mdi-check-circle-outline'
-                  "
-                  size="16"
+            <div
+              v-if="message.role === 'assistant' && (message.tools.length || message.content.trim())"
+              class="agent-assistant-segments"
+            >
+              <template v-for="segment in getRenderableMessageSegments(message)" :key="segment.key">
+                <AgentMarkdownContent
+                  v-if="segment.type === 'text'"
+                  :content="segment.content"
+                  :streaming="message.status === 'streaming'"
                 />
-                <span>{{ tool.message }}</span>
-              </div>
+                <div v-else class="agent-assistant-tool">
+                  <VIcon
+                    :icon="
+                      segment.tool.status === 'running' && message.status === 'streaming'
+                        ? 'line-md:loading-twotone-loop'
+                        : 'mdi-check-circle-outline'
+                    "
+                    size="16"
+                  />
+                  <span>{{ segment.tool.message }}</span>
+                </div>
+              </template>
             </div>
 
-            <div
-              v-if="message.content"
-              class="agent-assistant-message__bubble markdown-body"
-              v-html="renderMarkdown(message.content)"
+            <AgentMarkdownContent
+              v-else-if="message.content"
+              :content="message.content"
+              :streaming="message.status === 'streaming'"
             />
 
             <div v-if="message.choices.length" class="agent-assistant-choices">
               <div v-for="choice in message.choices" :key="choice.id" class="agent-assistant-choice">
                 <div class="agent-assistant-choice__bubble">
                   <div v-if="choice.title" class="agent-assistant-choice__title">{{ choice.title }}</div>
-                  <div class="agent-assistant-choice__prompt markdown-body" v-html="renderMarkdown(choice.prompt)" />
+                  <AgentMarkdownContent :content="choice.prompt" variant="choice" />
                   <div v-if="choice.status === 'selected'" class="agent-assistant-choice__selected">
                     <VIcon icon="mdi-check-circle-outline" size="16" />
                     <span>{{
@@ -2363,6 +2564,7 @@ onScopeDispose(() => {
             <div
               v-if="
                 !message.content &&
+                !message.segments.length &&
                 !message.attachments.length &&
                 !message.choices.length &&
                 message.status === 'streaming'
@@ -2454,6 +2656,8 @@ onScopeDispose(() => {
             :placeholder="inputPlaceholder"
             @input="handleInputChange"
             @keydown="handleInputKeydown"
+            @compositionstart="handleCompositionStart"
+            @compositionend="handleCompositionEnd"
           />
           <IconBtn
             class="agent-assistant-record agent-assistant-surface-btn"
@@ -2488,21 +2692,12 @@ onScopeDispose(() => {
   </aside>
 </template>
 
-<style lang="scss">
-.agent-assistant-history-overlay {
-  z-index: 2603 !important;
-}
-</style>
-
 <style lang="scss" scoped>
 /* stylelint-disable selector-pseudo-class-no-unknown */
 /* stylelint-disable no-descending-specificity */
 
 .agent-assistant-panel {
   position: fixed;
-
-  /* Agent 会话层保持高于入口（2600）和业务弹窗，同时低于自身弹出菜单。 */
-  z-index: 2601;
   overflow: hidden;
   background: rgb(var(--v-theme-surface));
 
@@ -2941,11 +3136,14 @@ onScopeDispose(() => {
   background: var(--agent-assistant-assistant-bg);
 }
 
-.agent-assistant-tools {
+.agent-assistant-segments {
   display: grid;
-  gap: 0.4rem;
+  gap: 0.5rem;
   inline-size: min(100%, 34rem);
-  margin-block-end: 0.5rem;
+}
+
+.agent-assistant-segments .agent-assistant-message__bubble {
+  inline-size: 100%;
 }
 
 .agent-assistant-tool {

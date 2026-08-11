@@ -8,6 +8,7 @@ import {
   GLASS_OPTICAL_STRENGTH_MAX,
   getGlassCssFrostBlur,
   getGlassMaterialResponse,
+  getGlassOverlayClarityBlur,
   getGlassOpticalCssTransmissionBrightness,
   getGlassOpticalPresetKey,
   getGlassOpticalPresetParameters,
@@ -18,6 +19,7 @@ import {
   type GlassOpticalPreset,
   type GlassOpticalPresetOverrides,
 } from '@/utils/glassOptics'
+import { normalizeThemeMaterialAccent } from '@/utils/glassColor'
 import { themeManager } from '@/utils/themeManager'
 import { syncThemeFavicon } from '@/utils/themePalette'
 
@@ -470,6 +472,7 @@ export function applyThemeCustomizerRootSettings(
     | 'glassTransmissionStrength'
     | 'glassTransparencyStrength'
     | 'layout'
+    | 'primaryColor'
     | 'radius'
     | 'semiDarkMenu'
     | 'shadow'
@@ -480,6 +483,9 @@ export function applyThemeCustomizerRootSettings(
 
   const materialResponse = getGlassMaterialResponse(settings.glassAppearance, settings.glassTransparencyStrength)
   const frostBlur = getGlassCssFrostBlur(settings.glassTransparencyStrength)
+  const overlayClarityBlur = getGlassOverlayClarityBlur(settings.glassTransparencyStrength)
+  const materialAccent =
+    normalizeThemeMaterialAccent(settings.primaryColor) ?? normalizeThemeMaterialAccent(defaultPrimaryColor)!
   const applyGlassResponse = (element: HTMLElement) => {
     element.style.setProperty('--glass-background-visibility', String(materialResponse.backgroundVisibility))
     element.style.setProperty('--glass-frost-blur-scale', String(materialResponse.frostBlurScale))
@@ -488,6 +494,8 @@ export function applyThemeCustomizerRootSettings(
     element.style.setProperty('--glass-tint-density', String(materialResponse.tintDensity))
     element.style.setProperty('--glass-blur-surface', `${frostBlur.surface}px`)
     element.style.setProperty('--glass-blur-raised', `${frostBlur.raised}px`)
+    element.style.setProperty('--glass-overlay-clarity-blur', `${overlayClarityBlur}px`)
+    element.style.setProperty('--glass-material-accent-rgb', materialAccent.rgb)
   }
 
   document.documentElement.setAttribute('data-glass-appearance', settings.glassAppearance)

@@ -11,6 +11,7 @@ import { useI18n } from 'vue-i18n'
 import AgentPetStage from './pet/AgentPetStage.vue'
 import type { AgentPetActionName, AgentPetIntent } from './pet/types'
 import { useAgentPetMachine } from './pet/useAgentPetMachine'
+import { AGENT_ASSISTANT_LAYER_Z_INDEX } from '@/constants/agentAssistant'
 
 interface AgentAssistantEntryBubble {
   id: string
@@ -45,6 +46,8 @@ const props = withDefaults(
     thinking: false,
   },
 )
+
+const ASSISTANT_PREVIEW_MAX_LENGTH = 480
 
 const emit = defineEmits<{
   open: []
@@ -163,6 +166,7 @@ const fabPositionStyle = computed(() => {
     ...fabPointerStyle.value,
     '--agent-assistant-fab-x': `${position.x}px`,
     '--agent-assistant-fab-y': `${position.y}px`,
+    zIndex: AGENT_ASSISTANT_LAYER_Z_INDEX.entry,
   }
 })
 const fabBubblePlacement = ref<FabBubblePlacement>('top')
@@ -1012,6 +1016,15 @@ function scheduleFabBubbleRemoval(id: string, duration = FAB_NOTIFICATION_BUBBLE
 function upsertFabBubble(bubble: AgentAssistantEntryBubble, options: { autoClose?: boolean; duration?: number } = {}) {
   if (!props.active || !bubble.text) return
 
+  const existingIndex = fabBubbles.value.findIndex(item => item.id === bubble.id)
+  if (existingIndex >= 0) {
+    fabBubbles.value[existingIndex] = bubble
+    setFabDocked(false)
+    nextTick(scheduleFabBubblePositionUpdate)
+    if (options.autoClose) scheduleFabBubbleRemoval(bubble.id, options.duration)
+    return
+  }
+
   const hadBubbles = hasFabBubbles.value
   const wasDocked = fabDocked.value
   const existingBubbles = fabBubbles.value.filter(item => item.id !== bubble.id)
@@ -1059,7 +1072,7 @@ function showAssistantReplyPreview(value: string) {
   showBubble({
     id: 'assistant-preview',
     kind: 'assistant',
-    text: value,
+    text: value.slice(0, ASSISTANT_PREVIEW_MAX_LENGTH),
   })
 }
 
@@ -1569,9 +1582,6 @@ defineExpose({
 
 .agent-assistant-fab {
   position: fixed;
-
-  /* 保持机器人和提示气泡高于 Vuetify 弹窗（2400）及全局 Toast（2500）。 */
-  z-index: 2600;
 
   --agent-assistant-robot-outline: color-mix(in srgb, rgb(var(--v-theme-primary)) 72%, #090510 28%);
   --agent-assistant-robot-outline-soft: color-mix(in srgb, rgb(var(--v-theme-primary)) 84%, #090510 16%);
