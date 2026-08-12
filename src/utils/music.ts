@@ -1,9 +1,8 @@
-import type { MediaInfo, MusicAlbumInfo, MusicArtistInfo, MusicEntityType } from '@/api/types'
+import type { MediaDataSource, MediaInfo, MusicAlbumInfo, MusicArtistInfo, MusicEntityType } from '@/api/types'
 import type { RouteLocationRaw } from 'vue-router'
 
 export interface MusicRouteTarget {
-  source?: string
-  media_source?: string
+  media_source?: MediaDataSource
   media_id?: string | number
   music_type?: MusicEntityType
   title?: string
@@ -58,8 +57,8 @@ export function formatMusicAudioSpecs(item?: MusicAudioInfo): string {
 }
 
 /** 返回音乐对象可用于路由和订阅的统一来源。 */
-export function getMusicSource(item: MusicRouteTarget): string | undefined {
-  return item.source || item.media_source
+export function getMusicSource(item: MusicRouteTarget): MediaDataSource | undefined {
+  return item.media_source
 }
 
 /** 返回内置音乐元数据源的用户可见名称。 */
@@ -69,7 +68,7 @@ export function getMusicSourceLabel(source?: string, translate?: (key: string) =
     theaudiodb: 'TheAudioDB',
     doubanmusic: translate?.('setting.cache.recognitionSource.doubanmusic') || '豆瓣音乐',
   }
-  return (source && labels[source]) || source || 'MusicBrainz'
+  return (source && labels[source]) || source || ''
 }
 
 /** 返回音乐候选在列表和状态缓存中的稳定身份。 */
@@ -80,13 +79,21 @@ export function getMusicKey(item: MusicRouteTarget): string {
 }
 
 /** 构造专辑详情路由。 */
-export function buildMusicAlbumRoute(albumId: string, title?: string, source = 'musicbrainz'): RouteLocationRaw {
-  return { path: '/music/album', query: { source, mediaid: albumId, title } }
+export function buildMusicAlbumRoute(
+  albumId: string,
+  title: string | undefined,
+  mediaSource: MediaDataSource,
+): RouteLocationRaw {
+  return { path: '/music/album', query: { media_source: mediaSource, media_id: albumId, title } }
 }
 
 /** 构造艺术家详情路由。 */
-export function buildMusicArtistRoute(artistId: string, name?: string, source = 'musicbrainz'): RouteLocationRaw {
-  return { path: '/music/artist', query: { source, mediaid: artistId, title: name } }
+export function buildMusicArtistRoute(
+  artistId: string,
+  name: string | undefined,
+  mediaSource: MediaDataSource,
+): RouteLocationRaw {
+  return { path: '/music/artist', query: { media_source: mediaSource, media_id: artistId, title: name } }
 }
 
 /** 按音乐实体类型构造详情路由，缺少标准身份时回退到音乐搜索页。 */
@@ -101,8 +108,8 @@ export function buildMusicDetailRoute(item: MusicRouteTarget): RouteLocationRaw 
   return {
     path: '/music/detail',
     query: {
-      source,
-      mediaid: mediaId,
+      media_source: source,
+      media_id: mediaId,
       title: item.title || item.name,
     },
   }
@@ -120,7 +127,8 @@ export function buildMusicResourceRoute(
   return {
     path: '/resource',
     query: {
-      keyword: `${source}:${item.media_id}`,
+      media_source: source,
+      media_id: item.media_id,
       type: '音乐',
       music_type: (item as MusicRouteTarget).music_type || 'recording',
       title: item.title,

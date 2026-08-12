@@ -574,8 +574,7 @@ export default {
     douban: 'Douban',
     bangumi: 'Bangumi',
     anilist: 'AniList',
-    music: 'Music',
-    theaudiodb: 'TheAudioDB',
+    music: 'MusicBrainz',
   },
   user: {
     admin: 'Admin',
@@ -1381,8 +1380,6 @@ export default {
     anilistTrendingNow: 'AniList TRENDING NOW',
     anilistPopularThisSeason: 'AniList POPULAR THIS SEASON',
     listenBrainzWeekly: 'Weekly Popular Music',
-    theAudioDbAlbums: 'TheAudioDB Top Albums',
-    theAudioDbTracks: 'TheAudioDB Top Tracks',
     doubanMusic: 'Douban Music Picks',
     tmdbHotMovies: 'TMDB Hot Movies',
     tmdbHotTVShows: 'TMDB Hot TV Shows',
@@ -2479,7 +2476,7 @@ export default {
         'Word to replace => Replacement\n' +
         'Front word <> Back word >> Episode offset (EP)\n' +
         'Word to replace => Replacement && Front word <> Back word >> Episode offset (EP)\n' +
-        'Replacement format supports: &#123;[tmdbid/doubanid/bangumiid/anilistid=xxx;type=movie/tv;g=xxx;s=xxx;e=xxx]&#125; to directly specify a media data source ID, where g is the episode group ID and s/e are season and episode numbers (all optional)',
+        'Replacement format supports: &#123;[media_source=themoviedb;media_id=xxx;type=movie/tv;g=xxx;s=xxx;e=xxx]&#125; to specify a media source and its native ID, where g is the episode group ID and s/e are season and episode numbers (all optional)',
       identifierSaveSuccess: 'Custom identifiers saved successfully',
       identifierSaveFailed: 'Failed to save custom identifiers!',
 
@@ -3211,10 +3208,10 @@ export default {
     pluginMarketSetting: {
       title: 'Plugin Market Settings',
       repoUrl: 'Plugin Repository URL',
-      repoPlaceholder: 'Format: https://github.com/narrator-z/MoviePilot-Plugins/,https://github.com/xxxx/xxxxxx/',
+      repoPlaceholder: 'Format: https://github.com/jxxghp/MoviePilot-Plugins/,https://github.com/xxxx/xxxxxx/',
       repoHint: 'Separate multiple URLs with new lines or commas',
       urlPlaceholder: 'Enter plugin repository URL',
-      textPlaceholder: 'https://github.com/narrator-z/MoviePilot-Plugins/\nhttps://github.com/xxxx/xxxxxx/',
+      textPlaceholder: 'https://github.com/jxxghp/MoviePilot-Plugins/\nhttps://github.com/xxxx/xxxxxx/',
       repoCountHint: '{count} plugin repository URLs maintained',
       listMode: 'List',
       textMode: 'Text',
@@ -3479,7 +3476,7 @@ export default {
       customWords: 'Custom Recognition Words',
       customWordsHint: 'Recognition words only used for this subscription',
       customWordsPlaceholder:
-        'Block word\nReplaced word => Replacement word\nPrefix <> Suffix >> Episode offset (EP)\nReplaced word => Replacement word && Prefix <> Suffix >> Episode offset (EP)\nReplacement word supports format: &#123;[tmdbid/doubanid/bangumiid/anilistid=xxx;type=movie/tv;g=xxx;s=xxx;e=xxx]&#125; to directly specify a media data source ID, where g is the episode group ID and s/e are season and episode numbers (all optional)',
+        'Block word\nReplaced word => Replacement word\nPrefix <> Suffix >> Episode offset (EP)\nReplaced word => Replacement word && Prefix <> Suffix >> Episode offset (EP)\nReplacement word supports format: &#123;[media_source=themoviedb;media_id=xxx;type=movie/tv;g=xxx;s=xxx;e=xxx]&#125; to specify a media source and its native ID, where g is the episode group ID and s/e are season and episode numbers (all optional)',
       cancelSubscribe: 'Cancel Subscription',
       save: 'Save',
       cancelSubscribeConfirm: 'Are you sure you want to cancel the subscription?',
@@ -4234,6 +4231,21 @@ export default {
     genre: 'Genre',
     zone: 'Region',
     year: 'Year',
+    music: {
+      genre: {
+        pop: 'Pop',
+        rock: 'Rock',
+        folk: 'Folk',
+        electronic: 'Electronic',
+        jazz: 'Jazz',
+        classical: 'Classical',
+        soundtrack: 'Soundtrack',
+        indie: 'Indie',
+        instrumental: 'Instrumental',
+      },
+      region: { mainland: 'Mainland China', hongKong: 'Hong Kong', taiwan: 'Taiwan', cantonese: 'Cantonese' },
+      sort: { comprehensive: 'Comprehensive', rating: 'Rating', date: 'Date', markCount: 'Most Marked' },
+    },
     sortType: {
       comprehensive: 'Comprehensive',
       releaseDate: 'Release Date',

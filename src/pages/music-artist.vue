@@ -1,18 +1,22 @@
 <script setup lang="ts">
 import MusicArtistView from '@/views/discover/MusicArtistView.vue'
+import { isMediaDataSource } from '@/utils/mediaId'
 
 // 路由参数
 const route = useRoute()
 
 // 音乐数据源原生艺术家 ID
-const mediaid = computed(() => route.query?.mediaid?.toString())
+const mediaId = computed(() => route.query?.media_id?.toString())
 
 // 音乐元数据来源
-const source = computed(() => route.query?.source?.toString() || 'musicbrainz')
+const mediaSource = computed(() => {
+  const source = route.query?.media_source?.toString()
+  return isMediaDataSource(source) ? source : undefined
+})
 </script>
 
 <template>
   <div>
-    <MusicArtistView :mediaid="mediaid" :source="source" />
+    <MusicArtistView :media-id="mediaId" :media-source="mediaSource" />
   </div>
 </template>

@@ -12,37 +12,37 @@ import { describe, expect, it } from 'vitest'
 
 describe('music utils', () => {
   it('routes a recording to the music detail page', () => {
-    expect(buildMusicDetailRoute({ source: 'musicbrainz', media_id: 'recording-1', title: '晴天' })).toEqual({
+    expect(buildMusicDetailRoute({ media_source: 'musicbrainz', media_id: 'recording-1', title: '晴天' })).toEqual({
       path: '/music/detail',
-      query: { source: 'musicbrainz', mediaid: 'recording-1', title: '晴天' },
+      query: { media_source: 'musicbrainz', media_id: 'recording-1', title: '晴天' },
     })
   })
 
   it('routes an album entity to the album page', () => {
     expect(
       buildMusicDetailRoute({
-        source: 'musicbrainz',
+        media_source: 'musicbrainz',
         media_id: 'release-group-1',
         music_type: 'album',
         title: '叶惠美',
       }),
     ).toEqual({
       path: '/music/album',
-      query: { source: 'musicbrainz', mediaid: 'release-group-1', title: '叶惠美' },
+      query: { media_source: 'musicbrainz', media_id: 'release-group-1', title: '叶惠美' },
     })
   })
 
   it('routes an artist entity to the artist page', () => {
     expect(
       buildMusicDetailRoute({
-        source: 'musicbrainz',
+        media_source: 'musicbrainz',
         media_id: 'artist-1',
         music_type: 'artist',
         name: 'Queen',
       }),
     ).toEqual({
       path: '/music/artist',
-      query: { source: 'musicbrainz', mediaid: 'artist-1', title: 'Queen' },
+      query: { media_source: 'musicbrainz', media_id: 'artist-1', title: 'Queen' },
     })
   })
 
@@ -53,14 +53,14 @@ describe('music utils', () => {
     })
   })
 
-  it('builds album and artist routes with the default source', () => {
-    expect(buildMusicAlbumRoute('release-group-1', '叶惠美')).toEqual({
+  it('builds album and artist routes with an explicit source', () => {
+    expect(buildMusicAlbumRoute('release-group-1', '叶惠美', 'musicbrainz')).toEqual({
       path: '/music/album',
-      query: { source: 'musicbrainz', mediaid: 'release-group-1', title: '叶惠美' },
+      query: { media_source: 'musicbrainz', media_id: 'release-group-1', title: '叶惠美' },
     })
-    expect(buildMusicArtistRoute('artist-1', 'Queen')).toEqual({
+    expect(buildMusicArtistRoute('artist-1', 'Queen', 'musicbrainz')).toEqual({
       path: '/music/artist',
-      query: { source: 'musicbrainz', mediaid: 'artist-1', title: 'Queen' },
+      query: { media_source: 'musicbrainz', media_id: 'artist-1', title: 'Queen' },
     })
   })
 
@@ -68,7 +68,7 @@ describe('music utils', () => {
     expect(
       buildMusicResourceRoute(
         {
-          source: 'musicbrainz',
+          media_source: 'musicbrainz',
           media_id: 'recording-1',
           title: '晴天',
           year: '2003',
@@ -78,7 +78,8 @@ describe('music utils', () => {
     ).toMatchObject({
       path: '/resource',
       query: {
-        keyword: 'musicbrainz:recording-1',
+        media_id: 'recording-1',
+        media_source: 'musicbrainz',
         music_type: 'recording',
         sites: '11,12',
         type: '音乐',
@@ -89,7 +90,7 @@ describe('music utils', () => {
   it('does not build a resource route for an artist browsing entity', () => {
     expect(
       buildMusicResourceRoute({
-        source: 'musicbrainz',
+        media_source: 'musicbrainz',
         media_id: 'artist-1',
         music_type: 'artist',
         title: 'Queen',
@@ -98,8 +99,8 @@ describe('music utils', () => {
   })
 
   it('keeps the entity type inside the list key so albums and tracks never collide', () => {
-    const track = getMusicKey({ source: 'musicbrainz', media_id: 'same-id' })
-    const album = getMusicKey({ source: 'musicbrainz', media_id: 'same-id', music_type: 'album' })
+    const track = getMusicKey({ media_source: 'musicbrainz', media_id: 'same-id' })
+    const album = getMusicKey({ media_source: 'musicbrainz', media_id: 'same-id', music_type: 'album' })
 
     expect(track).not.toEqual(album)
   })

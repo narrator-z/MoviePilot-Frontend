@@ -1,5 +1,5 @@
 import api from '@/api'
-import type { MediaInfo, Subscribe } from '@/api/types'
+import type { MediaDataSource, MediaInfo, Subscribe } from '@/api/types'
 import {
   getMediaSubscribeId,
   getSubscribeMode,
@@ -11,14 +11,26 @@ import { buildUserPermissionContext, hasPermission } from '@/utils/permission'
 import { computed, ref, shallowRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'vue-toastification'
+import { isMediaDataSource } from '@/utils/mediaId'
 
-export interface NativeSubscribeMediaInfo extends Partial<MediaInfo> {
-  anilistid?: number | string
-  bangumiid?: number | string
-  doubanid?: number | string
-  media_source?: string
-  tmdbid?: number | string
+type AuxiliaryMediaIdKey =
+  'tmdb_id' | 'imdb_id' | 'tvdb_id' | 'douban_id' | 'bangumi_id' | 'anilist_id' | 'anidb_id' | 'collection_id'
+
+export type NativeSubscribeMediaInfo = Omit<Partial<MediaInfo>, AuxiliaryMediaIdKey> & {
+  media_source?: MediaDataSource
 }
+
+// 插件输入只接受统一主身份；各来源辅助 ID 仍可存在于后端返回的 MediaInfo 中用于展示。
+const auxiliaryMediaIdKeys = new Set<AuxiliaryMediaIdKey>([
+  'tmdb_id',
+  'imdb_id',
+  'tvdb_id',
+  'douban_id',
+  'bangumi_id',
+  'anilist_id',
+  'anidb_id',
+  'collection_id',
+])
 
 export type NativeSubscribeResult =
   | { success: true }
@@ -47,15 +59,6 @@ function normalizeMediaType(value: unknown) {
   return undefined
 }
 
-/** 将数字或数字字符串转换为有效的正整数媒体 ID。 */
-function normalizeNumericId(value: unknown) {
-  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return value
-  if (typeof value !== 'string' || !/^\d+$/.test(value.trim())) return undefined
-
-  const id = Number(value)
-  return Number.isSafeInteger(id) && id > 0 ? id : undefined
-}
-
 /** 将字符串或数字 ID 转换为非空字符串。 */
 function normalizeStringId(value: unknown) {
   if (typeof value !== 'string' && typeof value !== 'number') return undefined
@@ -64,7 +67,7 @@ function normalizeStringId(value: unknown) {
   return id && id !== '0' ? id : undefined
 }
 
-/** 规范插件媒体信息并兼容后端字段别名，校验结果可供宿主明确拒绝无效调用。 */
+/** 规范插件媒体信息并校验统一媒体身份，校验结果可供宿主明确拒绝无效调用。 */
 export function normalizeNativeSubscribeMedia(input: unknown): MediaNormalizationResult {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return { success: false, reason: 'invalidMedia' }
@@ -77,39 +80,27 @@ export function normalizeNativeSubscribeMedia(input: unknown): MediaNormalizatio
   const title = typeof raw.title === 'string' ? raw.title.trim() : ''
   if (!title) return { success: false, reason: 'missingTitle' }
 
-  const source = normalizeStringId(raw.source ?? raw.media_source)
-  const mediaidPrefix = normalizeStringId(raw.mediaid_prefix)
+  const mediaSource = isMediaDataSource(raw.media_source) ? raw.media_source : undefined
+  const mediaId = normalizeStringId(raw.media_id)
+  if (!mediaSource || !mediaId) return { success: false, reason: 'missingId' }
+  const publicFields = Object.fromEntries(
+    Object.entries(raw).filter(([key]) => !auxiliaryMediaIdKeys.has(key as AuxiliaryMediaIdKey)),
+  )
   const normalizedMedia = {
-    ...raw,
-    anilist_id: normalizeNumericId(raw.anilist_id ?? raw.anilistid),
-    bangumi_id: normalizeStringId(raw.bangumi_id ?? raw.bangumiid),
-    douban_id: normalizeStringId(raw.douban_id ?? raw.doubanid),
-    media_id: normalizeStringId(raw.media_id),
-    mediaid_prefix: mediaidPrefix,
-    source,
+    ...publicFields,
+    media_id: mediaId,
+    media_source: mediaSource,
     title,
-    tmdb_id: normalizeNumericId(raw.tmdb_id ?? raw.tmdbid),
     type,
     year: normalizeStringId(raw.year),
   } as MediaInfo
-
-  if (!getMediaSubscribeId(normalizedMedia)) return { success: false, reason: 'missingId' }
 
   return { success: true, media: normalizedMedia }
 }
 
 /** 生成订阅记录的统一媒体标识，用于恢复电视剧已订阅季状态。 */
 function getSubscribeRecordMediaId(subscribe: Subscribe) {
-  if (subscribe.media_source && subscribe.media_id) {
-    const source = subscribe.media_source === 'themoviedb' ? 'tmdb' : subscribe.media_source
-    return `${source}:${subscribe.media_id}`
-  }
-  if (subscribe.mediaid) return subscribe.mediaid
-  if (subscribe.tmdbid) return `tmdb:${subscribe.tmdbid}`
-  if (subscribe.doubanid) return `douban:${subscribe.doubanid}`
-  if (subscribe.bangumiid) return `bangumi:${subscribe.bangumiid}`
-  if (subscribe.anilistid) return `anilist:${subscribe.anilistid}`
-  return ''
+  return subscribe.media_source && subscribe.media_id ? `${subscribe.media_source}:${subscribe.media_id}` : ''
 }
 
 /** 为插件联邦组件创建主程序原生订阅入口。 */
@@ -150,9 +141,10 @@ export function usePluginNativeSubscribe(): NativeSubscribe {
       api.get('mediaserver/exists', {
         params: {
           mtype: currentMedia.type,
+          media_source: currentMedia.media_source,
+          media_id: currentMedia.media_id,
           season: currentMedia.season,
           title: currentMedia.title,
-          tmdbid: currentMedia.tmdb_id,
           year: currentMedia.year,
         },
       }) as Promise<{ success?: boolean }>,

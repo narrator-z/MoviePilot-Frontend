@@ -24,8 +24,8 @@ const subtitle = computed(() => getMusicArtistSubtitle(props.artist))
 
 /** 打开艺术家详情页。 */
 function goArtistDetail() {
-  if (!props.artist?.media_id) return
-  router.push(buildMusicArtistRoute(props.artist.media_id, props.artist.name, props.artist.source))
+  if (!props.artist?.media_id || !props.artist.media_source) return
+  router.push(buildMusicArtistRoute(props.artist.media_id, props.artist.name, props.artist.media_source))
 }
 </script>
 

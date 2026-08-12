@@ -75,7 +75,7 @@ describe('SearchBarDialog media source selection', () => {
     await waitFor(() => {
       expect(router.currentRoute.value.path).toBe('/browse/media/search')
       expect(router.currentRoute.value.query).toEqual({
-        source: 'themoviedb',
+        media_source: 'themoviedb',
         title: '流浪地球',
         type: 'media',
       })
@@ -106,7 +106,7 @@ describe('SearchBarDialog media source selection', () => {
 
     await waitFor(() => {
       expect(router.currentRoute.value.query).toEqual({
-        source: 'themoviedb,douban',
+        media_source: 'themoviedb,douban',
         title: '芙莉莲',
         type: 'media',
       })
@@ -164,7 +164,7 @@ describe('SearchBarDialog media source selection', () => {
 
     await waitFor(() => {
       expect(router.currentRoute.value.query).toEqual({
-        source: 'anilist',
+        media_source: 'anilist',
         title: '芙莉莲',
         type: 'media',
       })
@@ -187,7 +187,27 @@ describe('SearchBarDialog media source selection', () => {
       expect(router.currentRoute.value.path).toBe('/music')
       expect(router.currentRoute.value.query).toEqual({
         query: 'Coldplay',
-        source: 'theaudiodb',
+        media_source: 'theaudiodb',
+      })
+    })
+  })
+
+  it('searches music with multiple selected sources', async () => {
+    const user = userEvent.setup()
+    const { router } = await renderSearchBar()
+    const input = await screen.findByPlaceholderText('搜索电影、剧集以及更多...')
+
+    await user.type(input, 'Coldplay')
+    const musicItem = getSearchItem('音乐')
+    const musicGroup = within(musicItem).getByRole('group', { name: '音乐搜索数据源' })
+    await user.click(within(musicGroup).getByRole('button', { name: '使用 TheAudioDB 搜索' }))
+    await user.click(musicItem)
+
+    await waitFor(() => {
+      expect(router.currentRoute.value.path).toBe('/music')
+      expect(router.currentRoute.value.query).toEqual({
+        query: 'Coldplay',
+        media_source: 'musicbrainz,theaudiodb',
       })
     })
   })
@@ -220,7 +240,7 @@ describe('SearchBarDialog media source selection', () => {
 
     await waitFor(() => {
       expect(router.currentRoute.value.query).toEqual({
-        source: 'douban',
+        media_source: 'douban',
         title: '刘德华',
         type: 'person',
       })

@@ -565,8 +565,7 @@ export default {
     douban: '豆瓣',
     bangumi: 'Bangumi',
     anilist: 'AniList',
-    music: '音樂',
-    theaudiodb: 'TheAudioDB',
+    music: 'MusicBrainz',
   },
   user: {
     admin: '管理員',
@@ -1369,8 +1368,6 @@ export default {
     anilistTrendingNow: 'AniList 當前趨勢',
     anilistPopularThisSeason: 'AniList 本季熱門',
     listenBrainzWeekly: '本週熱門音樂',
-    theAudioDbAlbums: 'TheAudioDB 熱門專輯',
-    theAudioDbTracks: 'TheAudioDB 熱門單曲',
     doubanMusic: '豆瓣音樂推薦',
     tmdbHotMovies: 'TMDB熱門電影',
     tmdbHotTVShows: 'TMDB熱門電視劇',
@@ -2436,7 +2433,7 @@ export default {
         '被替換詞 => 替換詞\n' +
         '前定位詞 <> 後定位詞 >> 集偏移量（EP）\n' +
         '被替換詞 => 替換詞 && 前定位詞 <> 後定位詞 >> 集偏移量（EP）\n' +
-        '其中替換詞支持格式：&#123;[tmdbid/doubanid/bangumiid/anilistid=xxx;type=movie/tv;g=xxx;s=xxx;e=xxx]&#125; 直接指定媒體數據源ID識別，其中g為劇集組編號，s、e為季數和集數（均可選）',
+        '其中替換詞支持格式：&#123;[media_source=themoviedb;media_id=xxx;type=movie/tv;g=xxx;s=xxx;e=xxx]&#125; 直接指定媒體數據源和ID識別，其中g為劇集組編號，s、e為季數和集數（均可選）',
       identifierSaveSuccess: '自定義識別詞保存成功',
       identifierSaveFailed: '自定義識別詞保存失敗！',
 
@@ -3155,10 +3152,10 @@ export default {
     pluginMarketSetting: {
       title: '插件市場設置',
       repoUrl: '插件倉庫地址',
-      repoPlaceholder: '格式：https://github.com/narrator-z/MoviePilot-Plugins/,https://github.com/xxxx/xxxxxx/',
+      repoPlaceholder: '格式：https://github.com/jxxghp/MoviePilot-Plugins/,https://github.com/xxxx/xxxxxx/',
       repoHint: '多個地址可使用換行或英文逗號分隔',
       urlPlaceholder: '輸入插件倉庫地址',
-      textPlaceholder: 'https://github.com/narrator-z/MoviePilot-Plugins/\nhttps://github.com/xxxx/xxxxxx/',
+      textPlaceholder: 'https://github.com/jxxghp/MoviePilot-Plugins/\nhttps://github.com/xxxx/xxxxxx/',
       repoCountHint: '目前已維護 {count} 個插件倉庫地址',
       listMode: '列表維護',
       textMode: '文字維護',
@@ -3419,7 +3416,7 @@ export default {
       customWords: '自定義識別詞',
       customWordsHint: '只對該訂閱使用的識別詞',
       customWordsPlaceholder:
-        '屏蔽詞\n被替換詞 => 替換詞\n前定位詞 <> 後定位詞 >> 集偏移量（EP）\n被替換詞 => 替換詞 && 前定位詞 <> 後定位詞 >> 集偏移量（EP）\n其中替換詞支援格式：&#123;[tmdbid/doubanid/bangumiid/anilistid=xxx;type=movie/tv;g=xxx;s=xxx;e=xxx]&#125; 直接指定媒體數據源ID識別，其中g為劇集組編號，s、e為季數和集數（均可選）',
+        '屏蔽詞\n被替換詞 => 替換詞\n前定位詞 <> 後定位詞 >> 集偏移量（EP）\n被替換詞 => 替換詞 && 前定位詞 <> 後定位詞 >> 集偏移量（EP）\n其中替換詞支援格式：&#123;[media_source=themoviedb;media_id=xxx;type=movie/tv;g=xxx;s=xxx;e=xxx]&#125; 直接指定媒體數據源和ID識別，其中g為劇集組編號，s、e為季數和集數（均可選）',
       cancelSubscribe: '取消訂閱',
       save: '儲存',
       cancelSubscribeConfirm: '是否確認取消訂閱？',
@@ -4166,6 +4163,21 @@ export default {
     genre: '風格',
     zone: '地區',
     year: '年代',
+    music: {
+      genre: {
+        pop: '流行',
+        rock: '搖滾',
+        folk: '民謠',
+        electronic: '電子',
+        jazz: '爵士',
+        classical: '古典',
+        soundtrack: '原聲',
+        indie: '獨立音樂',
+        instrumental: '純音樂',
+      },
+      region: { mainland: '內地', hongKong: '香港', taiwan: '台灣', cantonese: '粵語' },
+      sort: { comprehensive: '綜合排序', rating: '評分排序', date: '日期排序', markCount: '標註次數' },
+    },
     sortType: {
       comprehensive: '綜合排序',
       releaseDate: '首播時間',
