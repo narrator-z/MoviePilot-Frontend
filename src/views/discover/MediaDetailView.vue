@@ -44,7 +44,7 @@ const $toast = useToast()
 const mediaProps = defineProps({
   mediaid: String,
   title: String,
-  year: String,
+  year: [String, Number],
   type: String,
 })
 
@@ -176,10 +176,11 @@ function openSearchSiteDialog() {
   )
 }
 
-// 查询所有站点
+// 查询与当前媒体类型兼容的站点
 async function querySites() {
   try {
-    const data: Site[] = await api.get('site/')
+    const mediaType = mediaDetail.value.type === '电视剧' ? 'tv' : 'movie'
+    const data: Site[] = await api.get(`site/media/${mediaType}`)
 
     // 过滤站点，只有启用的站点才显示
     allSites.value = data.filter(item => item.is_active)
@@ -557,7 +558,7 @@ async function handleDoubanClick() {
       mediaDetail.value.douban_id,
       mediaDetail.value.type,
       mediaDetail.value.title,
-      mediaDetail.value.year,
+      mediaDetail.value.year?.toString(),
     )
   }
 }
@@ -567,9 +568,14 @@ function getImdbLink() {
   return `https://www.imdb.com/title/${mediaDetail.value.imdb_id}`
 }
 
-// 拼装TVDB地址
+// 拼装TVDB地址（优先使用 slug，TVDB 已弃用数字 ID 直达 URL）
 function getTvdbLink() {
-  return `https://www.thetvdb.com/series/${mediaDetail.value.tvdb_id}`
+  const slug = mediaDetail.value.tvdb_slug
+  const id = mediaDetail.value.tvdb_id
+  if (slug) {
+    return `https://www.thetvdb.com/series/${slug}`
+  }
+  return `https://www.thetvdb.com/series/${id}`
 }
 
 // 拼装Bangumi地址

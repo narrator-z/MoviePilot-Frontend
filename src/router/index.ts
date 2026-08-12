@@ -76,6 +76,37 @@ const router = createRouter({
           },
         },
         {
+          path: '/music',
+          component: () => import('../pages/music.vue'),
+          meta: {
+            keepAlive: true,
+            requiresAuth: true,
+            permission: 'search',
+            feature: PERMISSION_FEATURE.SEARCH_RESOURCE,
+          },
+        },
+        {
+          path: '/music/detail',
+          component: () => import('../pages/music-detail.vue'),
+          meta: {
+            requiresAuth: true,
+          },
+        },
+        {
+          path: '/music/album',
+          component: () => import('../pages/music-album.vue'),
+          meta: {
+            requiresAuth: true,
+          },
+        },
+        {
+          path: '/music/artist',
+          component: () => import('../pages/music-artist.vue'),
+          meta: {
+            requiresAuth: true,
+          },
+        },
+        {
           path: '/subscribe/movie',
           component: () => import('../pages/subscribe.vue'),
           meta: {
@@ -97,6 +128,18 @@ const router = createRouter({
             permission: 'subscribe',
             feature: PERMISSION_FEATURE.SUBSCRIBE_TV,
             subType: '电视剧',
+          },
+        },
+        {
+          path: '/subscribe/music',
+          component: () => import('../pages/subscribe.vue'),
+          meta: {
+            keepAlive: true,
+            keepAliveKey: 'subscribe-music',
+            requiresAuth: true,
+            permission: 'subscribe',
+            feature: PERMISSION_FEATURE.SUBSCRIBE_MUSIC,
+            subType: '音乐',
           },
         },
         {

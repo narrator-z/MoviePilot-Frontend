@@ -104,7 +104,9 @@ const SystemSettings = ref<any>({
     MEDIA_RECOGNIZE_SHARE: true,
     TMDB_API_DOMAIN: null,
     TMDB_API_KEY: null,
+    ACOUSTID_API_KEY: null,
     TMDB_IMAGE_DOMAIN: null,
+    MUSIC_COVER_PROXY: null,
     TMDB_LOCALE: null,
     META_CACHE_EXPIRE: 0,
     SCRAP_FOLLOW_TMDB: true,
@@ -181,6 +183,14 @@ const scrapingConfig = [
     items: [
       { key: 'episode_nfo', label: 'setting.system.episodeNfo' },
       { key: 'episode_thumb', label: 'setting.system.episodeThumb' },
+    ],
+  },
+  {
+    section: 'music',
+    items: [
+      { key: 'music_nfo', label: 'setting.system.musicNfo' },
+      { key: 'music_poster', label: 'setting.system.musicPoster' },
+      { key: 'music_lyrics', label: 'setting.system.musicLyrics' },
     ],
   },
 ]
@@ -2037,6 +2047,17 @@ watch(currentLlmSnapshotKey, (snapshotKey, previousSnapshotKey) => {
                   />
                 </VCol>
                 <VCol cols="12" md="6">
+                  <VTextField
+                    v-model="SystemSettings.Advanced.ACOUSTID_API_KEY"
+                    :label="t('setting.system.acoustIdApiKey')"
+                    :hint="t('setting.system.acoustIdApiKeyHint')"
+                    persistent-hint
+                    :placeholder="t('setting.system.acoustIdApiKeyPlaceholder')"
+                    :rules="[(v: string) => !!v || t('setting.system.acoustIdApiKeyRequired')]"
+                    prepend-inner-icon="mdi-music-box-multiple-outline"
+                  />
+                </VCol>
+                <VCol cols="12" md="6">
                   <VCombobox
                     v-model="SystemSettings.Advanced.TMDB_IMAGE_DOMAIN"
                     :label="t('setting.system.tmdbImageDomain')"
@@ -2046,6 +2067,16 @@ watch(currentLlmSnapshotKey, (snapshotKey, previousSnapshotKey) => {
                     :items="['image.tmdb.org']"
                     :rules="[(v: string) => !!v || t('setting.system.tmdbImageDomainRequired')]"
                     prepend-inner-icon="mdi-image"
+                  />
+                </VCol>
+                <VCol cols="12" md="6">
+                  <VTextField
+                    v-model="SystemSettings.Advanced.MUSIC_COVER_PROXY"
+                    :label="t('setting.system.musicCoverProxy')"
+                    :hint="t('setting.system.musicCoverProxyHint')"
+                    persistent-hint
+                    :placeholder="t('setting.system.musicCoverProxyPlaceholder')"
+                    prepend-inner-icon="mdi-music"
                   />
                 </VCol>
                 <VCol cols="12" md="6">
@@ -2203,7 +2234,7 @@ watch(currentLlmSnapshotKey, (snapshotKey, previousSnapshotKey) => {
                               <span class="ml-2">{{ t(item.label) }}</span>
                             </div>
                           </VCol>
-                          <VDivider v-if="section.section !== 'episode'" class="my-4" />
+                          <VDivider v-if="section.section !== 'music'" class="my-4" />
                         </VRow>
                       </VExpansionPanelText>
                     </VExpansionPanel>

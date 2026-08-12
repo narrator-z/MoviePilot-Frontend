@@ -100,6 +100,11 @@ export function getMediaSubscribeId(media?: MediaInfo) {
   return getMediaSubscribeIdentity(media)?.mediaKey ?? ''
 }
 
+/** 返回订阅 API 使用的音乐实体；旧音乐对象缺省时按单曲兼容。 */
+function getMusicSubscribeType(media?: MediaInfo) {
+  return media?.type === '音乐' ? (media.music_type ?? 'recording') : undefined
+}
+
 // 将订阅模式转换为后端订阅字段。
 function getSubscribePayload(mode: SubscribeMode): SubscribePayload {
   return {
@@ -271,10 +276,12 @@ export function useMediaSubscribe(options: UseMediaSubscribeOptions) {
 
     try {
       const media = currentMedia()
-      const subscribeConfigUrl =
-        media?.type === '电影'
-          ? 'system/setting/public/DefaultMovieSubscribeConfig'
-          : 'system/setting/public/DefaultTvSubscribeConfig'
+      const subscribeConfigUrl = {
+        电影: 'system/setting/public/DefaultMovieSubscribeConfig',
+        电视剧: 'system/setting/public/DefaultTvSubscribeConfig',
+        音乐: 'system/setting/public/DefaultMusicSubscribeConfig',
+      }[media?.type || '']
+      if (!subscribeConfigUrl) return undefined
       const result: { [key: string]: any } = await api.get(subscribeConfigUrl)
 
       return result.data?.value
@@ -308,7 +315,8 @@ export function useMediaSubscribe(options: UseMediaSubscribeOptions) {
     addOptions: AddSubscribeOptions = {},
   ) {
     const media = currentMedia()
-    if (!media) return
+    // 艺术家仅用于继续浏览，其下作品必须按单曲或专辑分别订阅。
+    if (!media || media.music_type === 'artist') return
     const identity = getMediaSubscribeIdentity(media)
 
     startNProgress()
@@ -316,7 +324,8 @@ export function useMediaSubscribe(options: UseMediaSubscribeOptions) {
       const result: { [key: string]: any } = await api.post('subscribe/', {
         name: media.title,
         type: media.type,
-        year: media.year,
+        // 后端的订阅模型 year 为字符串，音乐的 year 是数字，需统一转字符串避免 422
+        year: media.year?.toString() ?? '',
         tmdbid: media.tmdb_id,
         doubanid: media.douban_id,
         bangumiid: media.bangumi_id,
@@ -324,6 +333,9 @@ export function useMediaSubscribe(options: UseMediaSubscribeOptions) {
         media_source: identity?.source,
         media_id: identity?.mediaId,
         mediaid: identity?.mediaKey ?? '',
+        // 专辑订阅必须保留实体类型和曲目总数，后端据此校验整专资源并决定何时完成订阅。
+        music_type: getMusicSubscribeType(media),
+        total_tracks: getMusicSubscribeType(media) === 'album' ? media.total_tracks : undefined,
         season: media.type === '电影' ? null : season,
         ...payload,
         episode_group: episodeGroup.value,
@@ -381,6 +393,7 @@ export function useMediaSubscribe(options: UseMediaSubscribeOptions) {
       const result: { [key: string]: any } = await api.delete(`subscribe/media/${getMediaId()}`, {
         params: {
           season: media.type === '电影' ? null : season,
+          music_type: getMusicSubscribeType(media),
         },
       })
 
@@ -411,6 +424,7 @@ export function useMediaSubscribe(options: UseMediaSubscribeOptions) {
         params: {
           season,
           title: currentMedia()?.title,
+          music_type: getMusicSubscribeType(currentMedia()),
         },
       })
 
@@ -429,6 +443,7 @@ export function useMediaSubscribe(options: UseMediaSubscribeOptions) {
         params: {
           season,
           title: currentMedia()?.title,
+          music_type: getMusicSubscribeType(currentMedia()),
         },
       })
 
@@ -497,7 +512,7 @@ export function useMediaSubscribe(options: UseMediaSubscribeOptions) {
   // 处理媒体主订阅入口，电视剧统一进入季选择弹窗。
   function handlePrimarySubscribe() {
     const media = currentMedia()
-    if (!media) return
+    if (!media || media.music_type === 'artist') return
 
     const season = media.type === '电影' ? null : getPrimarySeason()
 

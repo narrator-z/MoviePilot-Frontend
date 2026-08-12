@@ -52,6 +52,7 @@ interface SearchParams {
   season: string
   episode: string
   sites: string
+  music_type: string
   result_type: string
 }
 
@@ -78,6 +79,7 @@ function createSearchParams(query: LocationQuery): SearchParams {
     season: query?.season?.toString() ?? '',
     episode: query?.episode?.toString() ?? '',
     sites: query?.sites?.toString() ?? '',
+    music_type: query?.music_type?.toString() ?? '',
     result_type: query?.result_type?.toString() === 'subtitle' ? 'subtitle' : 'torrent',
   }
 }
@@ -92,6 +94,7 @@ function normalizeSearchParams(params?: Partial<SearchParams> | null): SearchPar
     season: params?.season?.toString() ?? '',
     episode: params?.episode?.toString() ?? '',
     sites: params?.sites?.toString() ?? '',
+    music_type: params?.music_type?.toString() ?? '',
     result_type: params?.result_type?.toString() === 'subtitle' ? 'subtitle' : 'torrent',
   }
 }
@@ -195,6 +198,9 @@ async function resolveRefreshSearchParams() {
 
 // 查询TMDBID或标题
 const keyword = computed(() => activeSearchParams.value.keyword)
+
+// 媒体 ID 形式的关键词（如 musicbrainz:xxx、tmdb:xxx）对用户无意义，进度卡片中仅展示标题即可。
+const isMediaIdKeyword = computed(() => /^[a-zA-Z]+:/.test(keyword.value || ''))
 
 // 查询类型
 const type = computed(() => activeSearchParams.value.type)
@@ -351,6 +357,9 @@ const displayResourceCount = computed(() =>
 
 // 搜索中只显示进度区域，避免结果抬头和进度条同时占用顶部空间。
 const showResultHeader = computed(() => isRefreshed.value && !progressActive.value)
+
+// 记录过滤前的候选资源数，用于过滤后无结果时给出友好提示
+let streamCandidateCount = 0
 
 let pendingStreamItems: Array<Context> = []
 let pendingSubtitleStreamItems: Array<SubtitleInfo> = []
@@ -574,8 +583,10 @@ function buildSearchStreamUrl(params: SearchParams, requestToken?: string) {
     setSearchParam(url.searchParams, 'year', params.year)
     setSearchParam(url.searchParams, 'season', params.season)
     setSearchParam(url.searchParams, 'sites', params.sites)
+    setSearchParam(url.searchParams, 'music_type', params.music_type)
   } else {
     setSearchParam(url.searchParams, 'keyword', params.keyword)
+    setSearchParam(url.searchParams, 'mtype', params.type)
     setSearchParam(url.searchParams, 'sites', params.sites)
   }
 
@@ -593,6 +604,7 @@ function resetSearchResults() {
   // 新搜索开始时先回到未完成态，避免上一轮空态在 SSE 返回前抢先显示。
   isRefreshed.value = false
   errorDescription.value = t('resource.noResourceFound')
+  streamCandidateCount = 0
   rawDataList.value = []
   rawSubtitleDataList.value = []
   originalDataList.value = []
@@ -680,11 +692,29 @@ function appendSubtitleStreamResults(items: SubtitleInfo[]) {
   scheduleStreamFlush()
 }
 
+// 更新候选资源数：优先使用后端显式给出的 candidate_items，否则取搜索阶段事件的 total_items
+function updateStreamCandidateCount(eventData: { candidate_items?: unknown; stage?: unknown; total_items?: unknown }) {
+  if (typeof eventData.candidate_items === 'number') {
+    streamCandidateCount = Math.max(streamCandidateCount, eventData.candidate_items)
+  } else if (eventData.stage === 'searching' && typeof eventData.total_items === 'number') {
+    streamCandidateCount = Math.max(streamCandidateCount, eventData.total_items)
+  }
+}
+
+// 过滤后无结果但存在候选资源时，用友好提示替代默认的“未搜索到任何资源”
+function applyFilteredEmptyResultMessage(resultCount: number) {
+  if (resultCount === 0 && streamCandidateCount > 0) {
+    errorDescription.value = t('resource.filteredNoResults', { count: streamCandidateCount })
+  }
+}
+
 // 完整最终结果到达后原子替换资源列表。
 function applyFinalStreamResults(items: Context[]) {
   streamFinalResultApplied = true
   flushBufferedStreamState()
   setStreamResults(items)
+  // 候选全部被过滤规则淘汰时给出友好提示
+  applyFilteredEmptyResultMessage(items.length)
 }
 
 // 应用最终字幕搜索结果
@@ -730,6 +760,7 @@ function handleSearchStreamMessage(eventData: { [key: string]: any }) {
       updateSearchProgress(eventData, completedItems !== null)
       if (completedItems) applyFinalSubtitleStreamResults(completedItems)
     } else {
+      updateStreamCandidateCount(eventData)
       const completedItems = streamReplaceBatchCollector.append(eventData)
       updateSearchProgress(eventData, completedItems !== null)
       if (completedItems) applyFinalStreamResults(completedItems)
@@ -755,6 +786,7 @@ function handleSearchStreamMessage(eventData: { [key: string]: any }) {
   }
 
   const items = Array.isArray(eventData.items) ? (eventData.items as Context[]) : []
+  updateStreamCandidateCount(eventData)
   if (eventData.type === 'append') {
     updateSearchProgress(eventData)
     appendStreamResults(items)
@@ -766,6 +798,10 @@ function handleSearchStreamMessage(eventData: { [key: string]: any }) {
     applyFinalStreamResults(items)
   } else {
     updateSearchProgress(eventData)
+    // 标题搜索没有 replace 事件，最终结果为空时在此给出友好提示
+    if (eventData.type === 'done' && !streamFinalResultApplied) {
+      applyFilteredEmptyResultMessage(items.length)
+    }
   }
 }
 
@@ -816,8 +852,9 @@ async function requestSearchResults(params: SearchParams, requestToken?: string)
         area: params.area,
         title: params.title,
         year: params.year,
-        season: params.season,
-        sites: params.sites,
+        ...(params.season ? { season: params.season } : {}),
+        ...(params.sites ? { sites: params.sites } : {}),
+        ...(params.music_type ? { music_type: params.music_type } : {}),
         _ts: requestToken,
       },
     })
@@ -826,6 +863,7 @@ async function requestSearchResults(params: SearchParams, requestToken?: string)
     result = await api.get(`search/title`, {
       params: {
         keyword: params.keyword,
+        ...(params.type ? { mtype: params.type } : {}),
         sites: params.sites,
         _ts: requestToken,
       },
@@ -1380,7 +1418,13 @@ onUnmounted(() => {
             <div class="progress-copy">
               <span class="progress-title">{{ progressText }}</span>
               <div v-if="hasSearchTags" class="progress-tags d-flex flex-wrap">
-                <VChip v-if="keyword" class="search-tag progress-tag" color="primary" size="small" variant="tonal">
+                <VChip
+                  v-if="keyword && !isMediaIdKeyword"
+                  class="search-tag progress-tag"
+                  color="primary"
+                  size="small"
+                  variant="tonal"
+                >
                   {{ t('resource.keyword') }}: {{ keyword }}
                 </VChip>
                 <VChip v-if="title" class="search-tag progress-tag" color="primary" size="small" variant="tonal">

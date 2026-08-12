@@ -138,7 +138,89 @@ describe('SubscribeCard display and progress', () => {
     expect((image as HTMLImageElement).src).toContain('system/cache/image?url=')
     expect((image as HTMLImageElement).src).toContain(encodeURIComponent(media.backdrop || ''))
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
-    expect(screen.queryByText(/\d+ \/ \d+/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^\d{1,4} \/ \d{1,4}$/)).not.toBeInTheDocument()
+  })
+
+  it('uses the poster as the background fallback and replaces failed images with the placeholder', async () => {
+    const { container, media } = await renderCard({ backdrop: undefined })
+    const image = container.querySelector<HTMLImageElement>('img')
+
+    expect(image).not.toBeNull()
+    expect((image as HTMLImageElement).src).toContain(media.poster || '')
+
+    await fireEvent.error(image as HTMLImageElement)
+
+    await waitFor(() => expect(container.querySelector('.subscribe-card-placeholder')).toBeInTheDocument())
+  })
+
+  it('falls back from backdrop to poster for music subscriptions, then to the album placeholder', async () => {
+    // 仅海报：背景图回退到海报
+    const { container: posterOnly } = await renderCard(
+      {
+        backdrop: undefined,
+        poster: 'https://images.example.com/music-poster.jpg',
+        type: '音乐',
+      },
+      {},
+      true,
+    )
+    const posterOnlyImage = posterOnly.querySelector<HTMLImageElement>('img')
+    expect(posterOnlyImage).not.toBeNull()
+    expect((posterOnlyImage as HTMLImageElement).src).toContain('system/cache/image?url=')
+    expect((posterOnlyImage as HTMLImageElement).src).toContain(
+      encodeURIComponent('https://images.example.com/music-poster.jpg'),
+    )
+
+    // 背景图与海报都缺失：渲染与音乐媒体卡片一致的胶片占位背景
+    const { container } = await renderCard({ backdrop: undefined, poster: undefined, type: '音乐' })
+    const placeholder = container.querySelector('.subscribe-card-placeholder')
+    expect(placeholder).toBeInTheDocument()
+    expect(placeholder?.querySelector('.v-icon, [class*="mdi-album"]')).not.toBeNull()
+    expect(container.querySelector('img')).toBeNull()
+  })
+
+  it.each([480, 1024])('shows whole-album track count without fake episode progress at %ipx', async width => {
+    setViewport(width)
+    await renderCard({
+      music_type: 'album',
+      name: '叶惠美',
+      total_episode: undefined,
+      total_tracks: 11,
+      type: '音乐',
+    })
+
+    expect(screen.getByText('专辑 · 11 首')).toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+    expect(screen.queryByText(/^\d{1,4} \/ \d{1,4}$/)).not.toBeInTheDocument()
+  })
+
+  it('shows the current music quality on a music subscription card', async () => {
+    await renderCard({
+      current_audio_format: 'FLAC',
+      current_bit_depth: 24,
+      current_bitrate: 2304000,
+      current_sample_rate: 96000,
+      music_type: 'album',
+      name: '高解析专辑',
+      total_tracks: 11,
+      type: '音乐',
+    })
+
+    expect(screen.getByText('专辑 · 11 首 · FLAC · 24-bit · 96 kHz · 2,304 kbps')).toBeInTheDocument()
+  })
+
+  it.each([480, 1024])('identifies recording subscriptions at %ipx', async width => {
+    setViewport(width)
+    await renderCard({ music_type: 'recording', name: '晴天', total_tracks: undefined, type: '音乐' })
+
+    expect(screen.getByText('单曲')).toBeInTheDocument()
+    expect(screen.queryByText(/首$/)).not.toBeInTheDocument()
+  })
+
+  it('keeps the album identity visible when a legacy subscription has no track count', async () => {
+    await renderCard({ music_type: 'album', name: '旧专辑', total_tracks: undefined, type: '音乐' })
+
+    expect(screen.getByText('专辑')).toBeInTheDocument()
   })
 
   it.each([
@@ -150,7 +232,7 @@ describe('SubscribeCard display and progress', () => {
     await renderCard({ lack_episode: lackEpisode, season: 2, total_episode: totalEpisode, type: '电视剧' })
 
     if (expectedText) expect(screen.getByText(expectedText)).toBeInTheDocument()
-    else expect(screen.queryByText(/\d+ \/ \d+/)).not.toBeInTheDocument()
+    else expect(screen.queryByText(/^\d{1,4} \/ \d{1,4}$/)).not.toBeInTheDocument()
 
     if (expectedProgress) expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', expectedProgress)
     else expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()

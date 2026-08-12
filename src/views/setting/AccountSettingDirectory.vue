@@ -39,12 +39,15 @@ const mediaCategories = ref<{ [key: string]: any }>({})
 const $toast = useToast()
 
 // 数据源
-const sourceItems = [
-  { 'title': 'TheMovieDb', 'value': 'themoviedb' },
-  { 'title': '豆瓣', 'value': 'douban' },
-  { 'title': 'Bangumi', 'value': 'bangumi' },
-  { 'title': 'AniList', 'value': 'anilist' },
-]
+const sourceItems = computed(() => [
+  { title: t('setting.cache.recognitionSource.themoviedb'), value: 'themoviedb' },
+  { title: t('setting.cache.recognitionSource.douban'), value: 'douban' },
+  { title: t('setting.cache.recognitionSource.bangumi'), value: 'bangumi' },
+  { title: t('setting.cache.recognitionSource.anilist'), value: 'anilist' },
+  { title: t('setting.cache.recognitionSource.musicbrainz'), value: 'musicbrainz' },
+  { title: t('setting.cache.recognitionSource.theaudiodb'), value: 'theaudiodb' },
+  { title: t('setting.cache.recognitionSource.doubanmusic'), value: 'doubanmusic' },
+])
 
 // 存储选项（排除已添加的）
 const storageOptions = computed(() => {
@@ -63,6 +66,7 @@ const SystemSettings = ref<any>({
     SCRAP_SOURCE: 'themoviedb',
     MOVIE_RENAME_FORMAT: null,
     TV_RENAME_FORMAT: null,
+    MUSIC_RENAME_FORMAT: null,
   },
 })
 
@@ -107,6 +111,13 @@ const tvRenameFormat = computed({
   },
 })
 
+const musicRenameFormat = computed({
+  get: () => SystemSettings.value.Basic.MUSIC_RENAME_FORMAT ?? '',
+  set: value => {
+    SystemSettings.value.Basic.MUSIC_RENAME_FORMAT = value || null
+  },
+})
+
 // 加载系统设置
 async function loadSystemSettings() {
   try {
@@ -115,7 +126,9 @@ async function loadSystemSettings() {
       // 将API返回的值赋值给SystemSettings
       for (const sectionKey of Object.keys(SystemSettings.value) as Array<keyof typeof SystemSettings.value>) {
         Object.keys(SystemSettings.value[sectionKey]).forEach((key: string) => {
-          if (result.data.hasOwnProperty(key)) (SystemSettings.value[sectionKey] as any)[key] = result.data[key]
+          if (Object.prototype.hasOwnProperty.call(result.data, key)) {
+            Reflect.set(SystemSettings.value[sectionKey], key, result.data[key])
+          }
         })
       }
     }
@@ -163,6 +176,7 @@ async function saveStorages() {
     else $toast.error(t('setting.directory.storageSaveFailed'))
   } catch (error) {
     console.log(error)
+    $toast.error(t('setting.directory.storageSaveFailed'))
   }
 }
 
@@ -191,6 +205,7 @@ async function saveDirectories() {
     } else $toast.error(t('setting.directory.directorySaveFailed'))
   } catch (error) {
     console.log(error)
+    $toast.error(t('setting.directory.directorySaveFailed'))
   }
 }
 
@@ -285,6 +300,7 @@ async function saveSystemSettings(value: any) {
     } else $toast.error(t('setting.directory.organizeSaveFailed'))
   } catch (error) {
     console.log(error)
+    $toast.error(t('setting.directory.organizeSaveFailed'))
   }
 }
 
@@ -454,6 +470,29 @@ useSilentSettingRefresh(loadPageData, {
                 />
                 <div class="rename-format-editor__hint">
                   {{ t('setting.directory.movieRenameFormatHint') }}
+                </div>
+              </div>
+            </VCol>
+            <VCol cols="12">
+              <div class="rename-format-editor">
+                <div class="rename-format-editor__label">
+                  <VIcon icon="mdi-music-note" size="20" class="me-2" />
+                  <span>{{ t('setting.directory.musicRenameFormat') }}</span>
+                </div>
+                <VAceEditor
+                  v-model:value="musicRenameFormat"
+                  lang="jinja2"
+                  :theme="editorTheme"
+                  :options="renameEditorOptions"
+                  :print-margin="false"
+                  :min-lines="4"
+                  :max-lines="12"
+                  wrap
+                  class="rename-format-editor__ace"
+                  @init="configureAceEditorPadding"
+                />
+                <div class="rename-format-editor__hint">
+                  {{ t('setting.directory.musicRenameFormatHint') }}
                 </div>
               </div>
             </VCol>

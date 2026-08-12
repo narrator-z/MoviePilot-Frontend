@@ -1,5 +1,6 @@
 import DiscoverPage from '@/pages/discover.vue'
 import type { DiscoverSource } from '@/api/types'
+import { DEFAULT_PERMISSIONS } from '@/utils/permission'
 import { fireEvent, waitFor } from '@testing-library/vue'
 import { renderWithProviders } from '@tests/support/render'
 import {
@@ -7,7 +8,7 @@ import {
   discoverOrderConfigHandler,
   discoverSourcesHandler,
   saveDiscoverOrderHandler,
-  type DiscoverOrderItem,
+  type DiscoverTabConfigItem,
 } from '@tests/support/msw/handlers/discover'
 import { server } from '@tests/support/msw/server'
 import { HttpResponse, http } from 'msw'
@@ -20,14 +21,19 @@ interface HeaderTabItem {
 }
 
 interface HeaderTabConfig {
-  appendButtons: Array<{ action: () => void }>
+  appendButtons?: Array<{ action: () => void }>
   items: ComputedRef<HeaderTabItem[]> | Ref<HeaderTabItem[]> | HeaderTabItem[]
   modelValue: Ref<string>
 }
 
+interface DiscoverTabSettingsPayload {
+  enabled: Record<string, boolean>
+  tabs: DiscoverSource[]
+}
+
 interface SharedDialogEvents {
   close: () => void
-  save: (tabs: DiscoverSource[]) => Promise<void>
+  save: (settings: DiscoverTabSettingsPayload) => Promise<void>
   'update:modelValue': (value: boolean) => void
 }
 
@@ -41,14 +47,31 @@ const mocks = vi.hoisted(() => ({
   controllers: [] as SharedDialogController[],
   openSharedDialog: vi.fn(),
   registerHeaderTab: vi.fn(),
+  toastError: vi.fn(),
+  useDynamicButton: vi.fn(),
 }))
 
 vi.mock('@/composables/useDynamicHeaderTab', () => ({
   useDynamicHeaderTab: () => ({ registerHeaderTab: mocks.registerHeaderTab }),
 }))
 
+vi.mock('@/composables/useDynamicButton', () => ({
+  useDynamicButton: (options: unknown) => mocks.useDynamicButton(options),
+}))
+
+vi.mock('@/composables/usePWA', async () => {
+  const { ref } = await import('vue')
+  return {
+    usePWA: () => ({ appMode: ref(false) }),
+  }
+})
+
 vi.mock('@/composables/useSharedDialog', () => ({
   openSharedDialog: (...args: unknown[]) => mocks.openSharedDialog(...args),
+}))
+
+vi.mock('vue-toastification', () => ({
+  useToast: () => ({ error: mocks.toastError }),
 }))
 
 const BuiltInViewStub = defineComponent({
@@ -91,10 +114,16 @@ function keepAliveHarness() {
   })
 }
 
-async function renderDiscover() {
+async function renderDiscover(options: { discovery?: boolean; superUser?: boolean } = {}) {
   const componentError = vi.fn()
   const result = await renderWithProviders(keepAliveHarness(), {
     initialRoute: '/discover',
+    initialState: {
+      user: {
+        permissions: { ...DEFAULT_PERMISSIONS, discovery: options.discovery ?? true },
+        superUser: options.superUser ?? false,
+      },
+    },
     global: {
       config: {
         errorHandler: componentError,
@@ -104,6 +133,7 @@ async function renderDiscover() {
         BangumiView: BuiltInViewStub,
         DoubanView: BuiltInViewStub,
         ExtraSourceView: ExtraSourceViewStub,
+        MusicView: BuiltInViewStub,
         TheMovieDbView: BuiltInViewStub,
         VScrollToTopBtn: true,
       },
@@ -127,9 +157,16 @@ function getDialogCall(index = 0) {
   const call = mocks.openSharedDialog.mock.calls[index]
   if (!call) throw new Error(`未找到第 ${index + 1} 个排序弹窗`)
   return {
+    enabled: (call[1] as { enabled: Record<string, boolean> }).enabled,
     events: call[2] as SharedDialogEvents,
     tabs: (call[1] as { tabs: DiscoverSource[] }).tabs,
   }
+}
+
+function getSettingsButton() {
+  const button = document.querySelector<HTMLButtonElement>('.compact-fab')
+  if (!button) throw new Error('未找到探索设置 FAB')
+  return button
 }
 
 async function reactivateDiscover() {
@@ -143,6 +180,7 @@ async function reactivateDiscover() {
 describe('discover page', () => {
   beforeEach(() => {
     mocks.controllers.length = 0
+    server.use(discoverOrderConfigHandler(null))
     mocks.openSharedDialog.mockImplementation(() => {
       const controller: SharedDialogController = {
         close: vi.fn(),
@@ -154,14 +192,11 @@ describe('discover page', () => {
     })
   })
 
-  it('uses local order, merges sources by prefix, and keeps unconfigured tabs stable', async () => {
+  it('falls back to legacy local order when the server has no config and keeps new tabs visible', async () => {
     const configRequested = vi.fn()
-    localStorage.setItem(
-      'MP_DISCOVER_TAB_ORDER',
-      JSON.stringify([{ name: '豆瓣' }, { name: '自定义来源' }]),
-    )
+    localStorage.setItem('MP_DISCOVER_TAB_ORDER', JSON.stringify([{ name: '豆瓣' }, { name: '自定义来源' }]))
     server.use(
-      discoverOrderConfigHandler([], 200, configRequested),
+      discoverOrderConfigHandler(null, 200, configRequested),
       discoverSourcesHandler([
         createSource('自定义来源', 'custom'),
         createSource('重复自定义来源', 'custom'),
@@ -178,10 +213,20 @@ describe('discover page', () => {
         'TheMovieDb',
         'Bangumi',
         'AniList',
+        '音乐',
+        'TheAudioDB',
       ]),
     )
-    expect(configRequested).not.toHaveBeenCalled()
-    expect(getHeaderItems().map(item => item.tab)).toEqual(['douban', 'custom', 'themoviedb', 'bangumi', 'anilist'])
+    expect(configRequested).toHaveBeenCalledOnce()
+    expect(getHeaderItems().map(item => item.tab)).toEqual([
+      'douban',
+      'custom',
+      'themoviedb',
+      'bangumi',
+      'anilist',
+      'musicbrainz',
+      'theaudiodb',
+    ])
   })
 
   it('loads remote order when local order is absent and backfills localStorage', async () => {
@@ -201,10 +246,44 @@ describe('discover page', () => {
         'TheMovieDb',
         '豆瓣',
         'AniList',
+        '音乐',
+        'TheAudioDB',
         '自定义来源',
       ]),
     )
-    expect(localStorage.getItem('MP_DISCOVER_TAB_ORDER')).toBe(JSON.stringify(remoteOrder))
+    expect(JSON.parse(localStorage.getItem('MP_DISCOVER_TAB_ORDER') ?? 'null')).toEqual(
+      remoteOrder.map(item => ({ enabled: true, name: item.name })),
+    )
+  })
+
+  it('uses the server config over a stale browser cache and hides disabled tabs', async () => {
+    localStorage.setItem(
+      'MP_DISCOVER_TAB_ORDER',
+      JSON.stringify([
+        { enabled: true, mediaid_prefix: 'douban', name: '豆瓣' },
+        { enabled: true, mediaid_prefix: 'themoviedb', name: 'TheMovieDb' },
+      ]),
+    )
+    const remoteConfig: DiscoverTabConfigItem[] = [
+      { enabled: false, mediaid_prefix: 'douban', name: '豆瓣' },
+      { enabled: true, mediaid_prefix: 'musicbrainz', name: '音乐' },
+      { enabled: true, mediaid_prefix: 'themoviedb', name: 'TheMovieDb' },
+    ]
+    server.use(discoverOrderConfigHandler(remoteConfig), discoverSourcesHandler([]))
+
+    await renderDiscover()
+
+    await waitFor(() =>
+      expect(getHeaderItems().map(item => item.title)).toEqual([
+        '音乐',
+        'TheMovieDb',
+        'Bangumi',
+        'AniList',
+        'TheAudioDB',
+      ]),
+    )
+    expect(getHeaderConfig().modelValue.value).toBe('musicbrainz')
+    expect(localStorage.getItem('MP_DISCOVER_TAB_ORDER')).toBe(JSON.stringify(remoteConfig))
   })
 
   it('falls back to remote order when local JSON is malformed', async () => {
@@ -216,23 +295,39 @@ describe('discover page', () => {
     const { componentError } = await renderDiscover()
 
     await waitFor(() => expect(configRequested).toHaveBeenCalledOnce())
-    await waitFor(() => expect(getHeaderItems().map(item => item.title)).toEqual(['Bangumi', 'TheMovieDb', '豆瓣', 'AniList']))
-    expect(localStorage.getItem('MP_DISCOVER_TAB_ORDER')).toBe(JSON.stringify(remoteOrder))
+    await waitFor(() =>
+      expect(getHeaderItems().map(item => item.title)).toEqual([
+        'Bangumi',
+        'TheMovieDb',
+        '豆瓣',
+        'AniList',
+        '音乐',
+        'TheAudioDB',
+      ]),
+    )
+    expect(JSON.parse(localStorage.getItem('MP_DISCOVER_TAB_ORDER') ?? 'null')).toEqual(
+      remoteOrder.map(item => ({ enabled: true, name: item.name })),
+    )
     expect(componentError).not.toHaveBeenCalled()
   })
 
   it('keeps built-in and extra sources usable when the order config request fails', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.spyOn(console, 'log').mockImplementation(() => {})
-    server.use(
-      discoverOrderConfigHandler(null, 500),
-      discoverSourcesHandler([createSource('可用扩展源', 'available')]),
-    )
+    server.use(discoverOrderConfigHandler(null, 500), discoverSourcesHandler([createSource('可用扩展源', 'available')]))
 
     await renderDiscover()
 
     await waitFor(() => expect(getHeaderItems().map(item => item.title)).toContain('可用扩展源'))
-    expect(getHeaderItems().map(item => item.title)).toEqual(['TheMovieDb', '豆瓣', 'Bangumi', 'AniList', '可用扩展源'])
+    expect(getHeaderItems().map(item => item.title)).toEqual([
+      'TheMovieDb',
+      '豆瓣',
+      'Bangumi',
+      'AniList',
+      '音乐',
+      'TheAudioDB',
+      '可用扩展源',
+    ])
     expect(getHeaderConfig().modelValue.value).toBe('themoviedb')
   })
 
@@ -276,10 +371,7 @@ describe('discover page', () => {
   it('removes a withdrawn source and falls back to the first sorted tab after reactivation', async () => {
     let sources = [createSource('已撤销来源', 'withdrawn')]
     const requested = vi.fn()
-    localStorage.setItem(
-      'MP_DISCOVER_TAB_ORDER',
-      JSON.stringify([{ name: '已撤销来源' }, { name: 'TheMovieDb' }]),
-    )
+    localStorage.setItem('MP_DISCOVER_TAB_ORDER', JSON.stringify([{ name: '已撤销来源' }, { name: 'TheMovieDb' }]))
     server.use(
       http.get(discoverApiUrls.sources, () => {
         requested()
@@ -319,7 +411,15 @@ describe('discover page', () => {
 
     await waitFor(() => expect(requested).toHaveBeenCalledTimes(requestsBeforeReactivation + 1))
     expect(getHeaderItems().map(item => item.title)).toContain('缓存来源')
-    expect(getHeaderItems().map(item => item.title)).toEqual(['TheMovieDb', '豆瓣', 'Bangumi', 'AniList', '缓存来源'])
+    expect(getHeaderItems().map(item => item.title)).toEqual([
+      'TheMovieDb',
+      '豆瓣',
+      'Bangumi',
+      'AniList',
+      '音乐',
+      'TheAudioDB',
+      '缓存来源',
+    ])
   })
 
   it('replaces the header metadata when a source with the same prefix changes', async () => {
@@ -344,37 +444,95 @@ describe('discover page', () => {
     expect(getHeaderItems().map(item => item.title)).not.toContain('旧来源名称')
   })
 
-  it('saves the exact visible order through the shared dialog boundary', async () => {
-    const savedOrders: DiscoverOrderItem[][] = []
+  it('registers the settings entry in the Footer area and renders the matching desktop FAB', async () => {
+    const sourcesRequested = vi.fn()
+    localStorage.setItem('MP_DISCOVER_TAB_ORDER', JSON.stringify([]))
+    server.use(discoverSourcesHandler([], 200, sourcesRequested))
+
+    await renderDiscover()
+    await waitFor(() => expect(sourcesRequested).toHaveBeenCalledOnce())
+
+    expect(getHeaderConfig().appendButtons).toBeUndefined()
+    expect(mocks.useDynamicButton).toHaveBeenCalledWith(
+      expect.objectContaining({ icon: 'mdi-tune', permission: 'discovery' }),
+    )
+    expect(getSettingsButton()).toHaveAccessibleName('自定义探索标签')
+  })
+
+  it.each([
+    { discovery: false, superUser: false, visible: false },
+    { discovery: false, superUser: true, visible: true },
+  ])('applies discovery permission to the desktop settings entry', async ({ discovery, superUser, visible }) => {
+    const sourcesRequested = vi.fn()
+    localStorage.setItem('MP_DISCOVER_TAB_ORDER', JSON.stringify([]))
+    server.use(discoverSourcesHandler([], 200, sourcesRequested))
+
+    await renderDiscover({ discovery, superUser })
+    await waitFor(() => expect(sourcesRequested).toHaveBeenCalledOnce())
+
+    expect(Boolean(document.querySelector('.compact-fab'))).toBe(visible)
+  })
+
+  it('saves the exact order and visibility through the shared dialog boundary', async () => {
+    const savedConfigs: DiscoverTabConfigItem[][] = []
     localStorage.setItem('MP_DISCOVER_TAB_ORDER', JSON.stringify([]))
     server.use(
       discoverSourcesHandler([createSource('自定义来源', 'custom')]),
-      saveDiscoverOrderHandler(order => {
-        savedOrders.push(order)
+      saveDiscoverOrderHandler(config => {
+        savedConfigs.push(config)
       }),
     )
     await renderDiscover()
-    await waitFor(() => expect(getHeaderItems()).toHaveLength(5))
+    await waitFor(() => expect(getHeaderItems().map(item => item.title)).toContain('自定义来源'))
 
-    getHeaderConfig().appendButtons[0].action()
-    const { events, tabs } = getDialogCall()
-    const reorderedTabs = [tabs[4], tabs[1], tabs[0], tabs[3], tabs[2]]
-    await events.save(reorderedTabs)
+    getSettingsButton().click()
+    const { enabled, events, tabs } = getDialogCall()
+    const reorderedTabs = [tabs[4], tabs[1], tabs[0], tabs[3], tabs[2], tabs[5]]
+    const nextEnabled: Record<string, boolean> = { ...enabled, themoviedb: false }
+    await events.save({ enabled: nextEnabled, tabs: reorderedTabs })
 
-    const expectedOrder = reorderedTabs.map(item => ({ name: item.name }))
-    expect(savedOrders).toEqual([expectedOrder])
-    expect(localStorage.getItem('MP_DISCOVER_TAB_ORDER')).toBe(JSON.stringify(expectedOrder))
-    expect(getHeaderItems().map(item => item.title)).toEqual(reorderedTabs.map(item => item.name))
+    const expectedConfig = reorderedTabs.map(item => ({
+      enabled: nextEnabled[item.mediaid_prefix] !== false,
+      mediaid_prefix: item.mediaid_prefix,
+      name: item.name,
+    }))
+    expect(savedConfigs).toEqual([expectedConfig])
+    expect(localStorage.getItem('MP_DISCOVER_TAB_ORDER')).toBe(JSON.stringify(expectedConfig))
+    expect(getHeaderItems().map(item => item.title)).toEqual(
+      reorderedTabs.filter(item => nextEnabled[item.mediaid_prefix] !== false).map(item => item.name),
+    )
+    expect(getHeaderConfig().modelValue.value).toBe('musicbrainz')
     expect(mocks.controllers[0].close).toHaveBeenCalledOnce()
   })
 
-  it('closes the previous controller before opening another order dialog', async () => {
+  it('keeps the settings dialog open and leaves page state unchanged when server persistence fails', async () => {
+    const sourcesRequested = vi.fn()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    localStorage.setItem('MP_DISCOVER_TAB_ORDER', JSON.stringify([]))
+    server.use(
+      discoverSourcesHandler([], 200, sourcesRequested),
+      saveDiscoverOrderHandler(() => {}, 500),
+    )
+    await renderDiscover()
+    await waitFor(() => expect(sourcesRequested).toHaveBeenCalledOnce())
+    const originalTabs = getHeaderItems().map(item => item.title)
+
+    getSettingsButton().click()
+    const { enabled, events, tabs } = getDialogCall()
+    await events.save({ enabled: { ...enabled, themoviedb: false }, tabs })
+
+    expect(getHeaderItems().map(item => item.title)).toEqual(originalTabs)
+    expect(mocks.controllers[0].close).not.toHaveBeenCalled()
+    expect(mocks.toastError).toHaveBeenCalledWith('探索标签设置保存失败，请稍后重试')
+  })
+
+  it('closes the previous controller before opening another settings dialog', async () => {
     localStorage.setItem('MP_DISCOVER_TAB_ORDER', JSON.stringify([]))
     server.use(discoverSourcesHandler([createSource('弹窗就绪来源', 'dialog-ready')]))
     await renderDiscover()
     await waitFor(() => expect(getHeaderItems().map(item => item.title)).toContain('弹窗就绪来源'))
 
-    const action = getHeaderConfig().appendButtons[0].action
+    const action = () => getSettingsButton().click()
     action()
     action()
 
@@ -388,7 +546,7 @@ describe('discover page', () => {
     server.use(discoverSourcesHandler([createSource('弹窗就绪来源', 'dialog-ready')]))
     await renderDiscover()
     await waitFor(() => expect(getHeaderItems().map(item => item.title)).toContain('弹窗就绪来源'))
-    const action = getHeaderConfig().appendButtons[0].action
+    const action = () => getSettingsButton().click()
 
     action()
     getDialogCall(0).events.close()
@@ -420,11 +578,11 @@ describe('discover page', () => {
     )
     await renderDiscover()
     await waitFor(() => expect(getHeaderItems().map(item => item.title)).toContain('弹窗就绪来源'))
-    const action = getHeaderConfig().appendButtons[0].action
+    const action = () => getSettingsButton().click()
 
     action()
     const firstDialog = getDialogCall(0)
-    const pendingSave = firstDialog.events.save(firstDialog.tabs)
+    const pendingSave = firstDialog.events.save({ enabled: firstDialog.enabled, tabs: firstDialog.tabs })
     await waitFor(() => expect(saveStarted).toHaveBeenCalledOnce())
     firstDialog.events.close()
     action()

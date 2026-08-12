@@ -11,6 +11,7 @@ import { useDisplay } from 'vuetify'
 import { useGlobalSettingsStore } from '@/stores'
 import { openSharedDialog } from '@/composables/useSharedDialog'
 import { getDisplayImageUrl } from '@/utils/imageUtils'
+import { buildMusicDetailRoute, formatMusicAudioSpecs, formatMusicBitrate } from '@/utils/music'
 
 const SubscribeEditDialog = defineAsyncComponent(() => import('../dialog/SubscribeEditDialog.vue'))
 const SubscribeFilesDialog = defineAsyncComponent(() => import('../dialog/SubscribeFilesDialog.vue'))
@@ -55,6 +56,10 @@ const $toast = useToast()
 
 // 图片是否加载完成
 const imageLoaded = ref(false)
+
+// 背景图或海报加载失败时使用统一占位图，避免订阅卡片留下空白图片区。
+const backdropLoadError = ref(false)
+const posterLoadError = ref(false)
 
 // 当前的订阅状态
 const subscribeState = ref<string>(props.media?.state ?? 'P')
@@ -131,6 +136,44 @@ const subscribeProgressText = computed(() => {
   return `${downloadedEpisode.value} / ${total}`
 })
 
+// 音乐订阅始终展示实体类型；旧数据缺少 music_type 时按既有单曲语义兼容。
+const musicSubscribeMeta = computed(() => {
+  if (props.media?.type !== '音乐') return null
+  const currentSpecs = formatMusicAudioSpecs({
+    audio_format: props.media.current_audio_format,
+    bit_depth: props.media.current_bit_depth,
+    sample_rate: props.media.current_sample_rate,
+    bitrate: props.media.current_bitrate,
+  })
+  const selectedQuality = {
+    hires: t('music.audioQualityHires'),
+    'hires|lossless': t('music.audioQualityLossless'),
+    lossy: t('music.audioQualityLossy'),
+  }[props.media.audio_quality || '']
+  const selectedFormat = props.media.audio_format
+    ? props.media.audio_format === 'DSD|FLAC|ALAC|APE|WAV|AIFF|PCM'
+      ? t('music.audioFormatLossless')
+      : props.media.audio_format.replaceAll('|', '/')
+    : ''
+  const selectedBitrate = props.media.min_bitrate ? `≥ ${formatMusicBitrate(props.media.min_bitrate)}` : ''
+  const qualityText = currentSpecs || [selectedQuality, selectedFormat, selectedBitrate].filter(Boolean).join(' · ')
+  if (props.media.music_type === 'album') {
+    const trackCount = props.media.total_tracks
+    const entityText = trackCount
+      ? `${t('music.entityAlbum')} · ${t('music.trackCount', { count: trackCount })}`
+      : t('music.entityAlbum')
+    return {
+      icon: 'mdi-album',
+      text: [entityText, qualityText].filter(Boolean).join(' · '),
+    }
+  }
+
+  return {
+    icon: 'mdi-music-note',
+    text: [t('music.entityRecording'), qualityText].filter(Boolean).join(' · '),
+  }
+})
+
 // 订阅卡片 hover 文案：
 // - 普通订阅：「已下载 X · 共 Y 集」
 // - 洗版订阅：「已下载 X · 已洗版 N · 共 Y 集」
@@ -152,6 +195,17 @@ const subscribeProgressTooltip = computed(() => {
 // 图片加载完成响应
 function imageLoadHandler() {
   imageLoaded.value = true
+}
+
+// 背景图加载失败后直接切换占位图，避免同一失效地址在 poster fallback 中重复请求。
+function backdropErrorHandler() {
+  backdropLoadError.value = true
+  imageLoaded.value = true
+}
+
+// 海报加载失败后使用占位图，保留卡片布局和可点击区域。
+function posterErrorHandler() {
+  posterLoadError.value = true
 }
 
 // 进度条 model 段百分比：洗版订阅表示"已洗版"占比（亮段），普通订阅表示"已下载"占比
@@ -283,6 +337,10 @@ function getMediaId() {
 
 // 查看媒体详情
 async function viewMediaDetail() {
+  if (props.media?.type === '音乐') {
+    router.push(buildMusicDetailRoute(props.media))
+    return
+  }
   router.push({
     path: '/media',
     query: {
@@ -360,6 +418,7 @@ const dropdownItems = computed(() => [
       prependIcon: 'mdi-file-document-outline',
       click: viewSubscribeFiles,
     },
+    show: props.media?.type !== '音乐',
   },
   {
     title: t('common.unsubscribe'),
@@ -389,17 +448,56 @@ watch(
   },
 )
 
+// 切换订阅记录时重新尝试加载图片，避免复用卡片组件后沿用旧的失败状态。
+watch(
+  () => [props.media?.id, props.media?.backdrop, props.media?.poster],
+  () => {
+    imageLoaded.value = false
+    backdropLoadError.value = false
+    posterLoadError.value = false
+  },
+)
+
+// 媒体占位图标：电影/电视剧/音乐各自使用对应图标，缺失封面时统一渲染图标 + 底色占位
+const placeholderIcon = computed(() => {
+  switch (props.media?.type) {
+    case '音乐':
+      return 'mdi-album'
+    case '电视剧':
+      return 'mdi-television-classic'
+    case '电影':
+    default:
+      return 'mdi-movie-open-outline'
+  }
+})
+
 // 计算backdrop图片地址
 const backdropUrl = computed(() => {
+  if (backdropLoadError.value) return ''
   const url = props.media?.backdrop || props.media?.poster
-  return getDisplayImageUrl(url || '', globalSettings.GLOBAL_IMAGE_CACHE)
+  if (!url) return ''
+  return getDisplayImageUrl(url, globalSettings.GLOBAL_IMAGE_CACHE)
 })
 
 // 计算海报图片地址
 const posterUrl = computed(() => {
-  const url = props.media?.poster
-  return getDisplayImageUrl(url || '', globalSettings.GLOBAL_IMAGE_CACHE)
+  if (posterLoadError.value) return ''
+  const url = props.media?.poster || props.media?.backdrop
+  if (!url) return ''
+  return getDisplayImageUrl(url, globalSettings.GLOBAL_IMAGE_CACHE)
 })
+
+// 缺失封面时展示媒体占位背景（图标 + 底色），对齐音乐媒体卡片
+const showPlaceholder = computed(() => !backdropUrl.value)
+
+// 占位背景出现时同步标记图片已加载，让卡片正文与徽标正常渲染
+watch(
+  showPlaceholder,
+  show => {
+    if (show) imageLoaded.value = true
+  },
+  { immediate: true },
+)
 
 // 订阅编辑保存
 function onSubscribeEditSave() {
@@ -478,7 +576,22 @@ function handleCardClick() {
                 </IconBtn>
               </div>
               <template #image v-if="display.smAndUp.value">
-                <VImg :src="backdropUrl || posterUrl" aspect-ratio="3/2" cover @load="imageLoadHandler" position="top">
+                <div
+                  v-if="showPlaceholder"
+                  class="subscribe-card-placeholder subscribe-card-placeholder--cover d-flex align-center justify-center relative"
+                >
+                  <VIcon :icon="placeholderIcon" size="64" color="medium-emphasis" />
+                  <div class="absolute inset-0 outline-none subscribe-card-background"></div>
+                </div>
+                <VImg
+                  v-else
+                  :src="backdropUrl || posterUrl"
+                  aspect-ratio="3/2"
+                  cover
+                  @load="imageLoadHandler"
+                  @error="backdropErrorHandler"
+                  position="top"
+                >
                   <template #placeholder>
                     <div class="w-full h-full">
                       <VSkeletonLoader class="object-cover aspect-w-3 aspect-h-2" />
@@ -492,12 +605,21 @@ function handleCardClick() {
 
               <template v-if="display.xs.value">
                 <div class="subscribe-card-mobile-media">
+                  <div
+                    v-if="showPlaceholder"
+                    class="subscribe-card-placeholder d-flex align-center justify-center relative"
+                  >
+                    <VIcon :icon="placeholderIcon" size="64" color="medium-emphasis" />
+                    <div class="absolute inset-0 outline-none subscribe-card-background"></div>
+                  </div>
                   <VImg
+                    v-else
                     :src="backdropUrl || posterUrl"
                     :aspect-ratio="16 / 9"
                     cover
                     position="top"
                     @load="imageLoadHandler"
+                    @error="backdropErrorHandler"
                   >
                     <template #placeholder>
                       <VSkeletonLoader class="h-full w-full" />
@@ -550,8 +672,11 @@ function handleCardClick() {
                           :data-subscribe-state-icon="compactStateDisplay.icon"
                           size="16"
                         />
-                        <span v-if="subscribeProgressText" class="subscribe-card-mobile-progress-text">
-                          {{ subscribeProgressText }}
+                        <span
+                          v-if="subscribeProgressText || musicSubscribeMeta"
+                          class="subscribe-card-mobile-progress-text"
+                        >
+                          {{ subscribeProgressText || musicSubscribeMeta?.text }}
                         </span>
                       </div>
 
@@ -591,13 +716,13 @@ function handleCardClick() {
               </template>
 
               <div v-else>
-                <VCardText class="flex items-center pt-3 pb-2">
+                <VCardText class="flex flex-1 items-center pt-3 pb-9">
                   <div
                     class="h-auto w-12 flex-shrink-0 overflow-hidden rounded-md relative"
-                    v-if="imageLoaded"
+                    v-if="imageLoaded && posterUrl"
                     :class="{ 'cursor-move': props.sortable && display.mdAndUp.value }"
                   >
-                    <VImg :src="posterUrl" aspect-ratio="2/3" cover>
+                    <VImg :src="posterUrl" aspect-ratio="2/3" cover @error="posterErrorHandler">
                       <template #placeholder>
                         <div class="w-full h-full">
                           <VSkeletonLoader class="object-cover aspect-w-2 aspect-h-3" />
@@ -615,7 +740,9 @@ function handleCardClick() {
                     </div>
                   </div>
                 </VCardText>
-                <VCardText class="flex min-w-0 justify-space-between align-center flex-wrap px-3">
+                <VCardText
+                  class="absolute inset-x-0 bottom-2 z-10 flex min-w-0 justify-space-between align-center flex-wrap px-3"
+                >
                   <div class="flex min-w-0 max-w-full align-center">
                     <VIcon
                       v-if="props.media?.total_episode && props.sortable"
@@ -637,6 +764,13 @@ function handleCardClick() {
                       <VTooltip v-if="subscribeProgressTooltip" activator="parent" location="top">
                         {{ subscribeProgressTooltip }}
                       </VTooltip>
+                    </div>
+                    <div
+                      v-else-if="musicSubscribeMeta"
+                      class="flex flex-shrink-0 align-center text-subtitle-2 me-2 text-white"
+                    >
+                      <VIcon :icon="musicSubscribeMeta.icon" size="small" class="me-1" />
+                      {{ musicSubscribeMeta.text }}
                     </div>
                     <VIcon
                       v-if="props.media?.username && props.sortable"
@@ -888,6 +1022,18 @@ function handleCardClick() {
 
 .subscribe-card-background {
   background-image: linear-gradient(180deg, rgba(31, 41, 55, 47%) 0%, rgb(31, 41, 55) 100%);
+}
+
+/* 缺失封面时的媒体占位背景（图标 + 底色），对齐音乐媒体卡片 */
+.subscribe-card-placeholder {
+  block-size: 100%;
+  inline-size: 100%;
+  background: rgba(var(--v-theme-on-surface), 0.08);
+}
+
+/* 桌面版占位与图片同高，避免无图时卡片整体塌陷上浮 */
+.subscribe-card-placeholder--cover {
+  aspect-ratio: 3 / 2;
 }
 
 /**

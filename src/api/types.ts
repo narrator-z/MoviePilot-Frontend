@@ -1,4 +1,5 @@
-export type MediaDataSource = 'themoviedb' | 'douban' | 'bangumi' | 'anilist' | (string & {})
+export type MediaDataSource =
+  'themoviedb' | 'douban' | 'bangumi' | 'anilist' | 'musicbrainz' | 'theaudiodb' | 'doubanmusic' | (string & {})
 
 // 手动刮削选项
 export interface ManualScrapeOptions {
@@ -8,6 +9,8 @@ export interface ManualScrapeOptions {
   media_id?: string
   // 媒体类型
   type_name?: string
+  // 音乐实体类型
+  music_type?: MusicEntityType
 }
 
 // 订阅
@@ -18,7 +21,7 @@ export interface Subscribe {
   name: string
   // 订阅年份
   year: string
-  // 订阅类型 电影/电视剧
+  // 订阅类型 电影/电视剧/音乐
   type: string
   // 搜索关键字
   keyword?: string
@@ -34,6 +37,10 @@ export interface Subscribe {
   media_source?: MediaDataSource
   // 数据源原生ID
   media_id?: string
+  // 音乐实体类型：recording 单曲、album 专辑、artist 艺术家
+  music_type?: MusicEntityType
+  // 专辑总曲目数
+  total_tracks?: number
   // 其它媒体ID
   mediaid?: string
   // 季号
@@ -58,6 +65,16 @@ export interface Subscribe {
   resolution?: string
   // 特效
   effect?: string
+  // 音乐音质等级正则
+  audio_quality?: string
+  // 音频格式正则
+  audio_format?: string
+  // 最低码率（bps）
+  min_bitrate?: number
+  // 最低位深（bit）
+  min_bit_depth?: number
+  // 最低采样率（Hz）
+  min_sample_rate?: number
   // 总集数
   total_episode?: number
   // 开始集数
@@ -84,6 +101,14 @@ export interface Subscribe {
   search_imdbid?: any
   // 当前优先级
   current_priority: number
+  // 当前音乐版本格式
+  current_audio_format?: string
+  // 当前音乐版本码率（bps）
+  current_bitrate?: number
+  // 当前音乐版本位深（bit）
+  current_bit_depth?: number
+  // 当前音乐版本采样率（Hz）
+  current_sample_rate?: number
   // 洗版时已下载剧集的优先级状态
   episode_priority?: Record<string, number>
   // 保存目录
@@ -140,6 +165,10 @@ export interface SubscribeShare {
   media_source?: MediaDataSource
   // 数据源原生ID
   media_id?: string
+  // 音乐实体类型：recording 单曲、album 专辑、artist 艺术家
+  music_type?: MusicEntityType
+  // 专辑总曲目数
+  total_tracks?: number
   // 季号
   season?: number
   // 海报
@@ -264,6 +293,20 @@ export interface TransferHistory {
   errmsg?: string
   // 日期
   date?: string
+  // 音乐实体类型
+  music_type?: MusicEntityType
+  // 专辑预期总曲目数
+  total_tracks?: number
+  // 实际音频格式
+  audio_format?: string
+  // 是否无损音频
+  audio_lossless?: boolean
+  // 实际位深（bit）
+  bit_depth?: number
+  // 实际采样率（Hz）
+  sample_rate?: number
+  // 实际码率（bps）
+  bitrate?: number
   // 源文件项
   src_fileitem?: FileItem
 }
@@ -330,14 +373,14 @@ export interface DownloadHistory {
 
 // 媒体信息
 export interface MediaInfo {
-  // 来源：themoviedb、douban、bangumi、anilist
+  // 来源：themoviedb、douban、bangumi、anilist、musicbrainz、theaudiodb、doubanmusic
   source?: string
-  // 类型 电影、电视剧、合集
+  // 类型 电影、电视剧、音乐、合集
   type?: string
   // 媒体标题
   title?: string
-  // 年份
-  year?: string
+  // 年份（音乐等数据源返回数字，订阅接口要求字符串）
+  year?: string | number
   // 标题（年）
   title_year?: string
   // 季号
@@ -348,6 +391,8 @@ export interface MediaInfo {
   imdb_id?: string
   // TVDB ID
   tvdb_id?: string
+  // TVDB Slug（别名，用于构建 TheTvDb 直达链接）
+  tvdb_slug?: string
   // 豆瓣ID
   douban_id?: string
   // Bangumi ID
@@ -436,6 +481,193 @@ export interface MediaInfo {
   names?: string[]
   // 剧集组
   episode_group?: string
+  // 音乐艺术家列表
+  artists?: string[]
+  // 音乐艺术家展示文本
+  artist?: string
+  // 音乐实体类型：recording 单曲、album 专辑、artist 艺术家
+  music_type?: MusicEntityType
+  // 音乐艺术家标准ID，顺序与 artists 一致
+  artist_ids?: string[]
+  // 专辑
+  album?: string
+  // 专辑艺术家
+  album_artist?: string
+  // 所属专辑标准ID
+  album_id?: string
+  // 专辑主类型：Album、EP、Single 等
+  album_type?: string
+  // 发行版本
+  version?: string
+  // 音轨号
+  track_number?: number
+  // 碟号
+  disc_number?: number
+  // 总音轨数
+  total_tracks?: number
+  // 音轨时长（秒）
+  duration?: number
+  // ISRC
+  isrc?: string
+  // 音乐封面
+  cover_url?: string
+  // ListenBrainz 收听次数
+  listen_count?: number
+  // 音频格式
+  audio_format?: string
+  // 是否无损音频
+  audio_lossless?: boolean
+  // 音质等级
+  audio_quality?: 'hires' | 'lossless' | 'lossy'
+  // 音质洗版分数
+  audio_quality_score?: number
+  // 格式化音频参数
+  audio_specs?: string
+  // 音频位深
+  bit_depth?: number
+  // 音频采样率
+  sample_rate?: number
+  // 音频码率
+  bitrate?: number
+}
+
+// 音乐可浏览实体类型
+export type MusicEntityType = 'recording' | 'album' | 'artist'
+
+// 音乐专辑下的单个发行版本
+export interface MusicRelease {
+  // 发行版本标准ID
+  media_id?: string
+  // 发行版本名称
+  title?: string
+  // 发行日期
+  date?: string
+  // 发行年份
+  year?: number
+  // 发行地区
+  country?: string
+  // 发行状态：Official、Promotion 等
+  status?: string
+  // 包装形式
+  packaging?: string
+  // 介质格式：CD、Vinyl 等
+  formats?: string[]
+  // 音轨总数
+  track_count?: number
+  // 封面
+  cover_url?: string
+}
+
+// 音乐专辑详情
+export interface MusicAlbumInfo {
+  // 类型，固定为音乐
+  type?: string
+  // 实体类型，固定为 album
+  music_type?: MusicEntityType
+  // 来源
+  source?: string
+  // 专辑标准ID
+  media_id?: string
+  // 专辑名称
+  title?: string
+  // 艺术家列表
+  artists?: string[]
+  // 艺术家展示文本
+  artist?: string
+  // 艺术家标准ID，顺序与 artists 一致
+  artist_ids?: string[]
+  // 专辑名称，与 title 一致，便于复用音乐展示组件
+  album?: string
+  // 专辑主类型
+  album_type?: string
+  // 专辑副类型
+  secondary_types?: string[]
+  // 首次发行年份
+  year?: number
+  // 首次发行日期
+  release_date?: string
+  // 音轨总数
+  total_tracks?: number
+  // 专辑总时长（秒）
+  duration?: number
+  // 封面
+  cover_url?: string
+  // 风格
+  genres?: string[]
+  // 标签
+  tags?: string[]
+  // 主类型与副类型组合文本
+  category?: string
+  // 10 分制评分
+  rating?: number
+  // 评分人数
+  rating_votes?: number
+  // 详情页面
+  detail_link?: string
+  // 专辑内的音乐
+  tracks?: MediaInfo[]
+  // 同一专辑的其它发行版本
+  releases?: MusicRelease[]
+  // 海报
+  poster_path?: string
+  // 背景图
+  backdrop_path?: string
+  // 摘要
+  overview?: string
+}
+
+// 音乐艺术家详情
+export interface MusicArtistInfo {
+  // 类型，固定为音乐
+  type?: string
+  // 实体类型，固定为 artist
+  music_type?: MusicEntityType
+  // 来源
+  source?: string
+  // 艺术家标准ID
+  media_id?: string
+  // 艺术家名称
+  name?: string
+  // 名称，与 name 一致，便于复用通用展示组件
+  title?: string
+  // 排序名称
+  sort_name?: string
+  // 消歧义说明
+  disambiguation?: string
+  // 艺术家类型：Person、Group 等
+  artist_type?: string
+  // 性别
+  gender?: string
+  // 国家代码
+  country?: string
+  // 地区
+  area?: string
+  // 出道或成立日期
+  begin_date?: string
+  // 解散或去世日期
+  end_date?: string
+  // 是否已结束活动
+  ended?: boolean
+  // 活跃时间区间文本
+  life_span?: string
+  // 风格
+  genres?: string[]
+  // 标签
+  tags?: string[]
+  // 别名
+  aliases?: string[]
+  // 与当前艺术家的关系文本
+  relation?: string
+  // 艺术家图片
+  image_url?: string
+  // 详情页面
+  detail_link?: string
+  // 外部站点链接
+  external_links?: Record<string, string>
+  // 海报
+  poster_path?: string
+  // 摘要
+  overview?: string
 }
 
 // 季信息
@@ -983,7 +1215,25 @@ export interface MetaInfo {
   // 识别的英文名
   en_name?: string
   // 年份
-  year?: string
+  year?: string | number
+  // 音乐艺术家列表
+  artists?: string[]
+  // 音乐艺术家展示文本
+  artist?: string
+  // 音乐专辑
+  album?: string
+  // 音乐专辑艺术家
+  album_artist?: string
+  // 音乐碟号
+  disc_number?: number
+  // 音乐音轨号
+  track_number?: number
+  // 音乐总音轨数
+  total_tracks?: number
+  // 音乐时长（秒）
+  duration?: number
+  // 音乐 ISRC
+  isrc?: string
   // 总季数
   total_season: number
   // 识别的开始季 数字
@@ -1010,6 +1260,22 @@ export interface MetaInfo {
   video_encode?: string
   // 音频编码
   audio_encode?: string
+  // 音频格式
+  audio_format?: string
+  // 是否无损音频
+  audio_lossless?: boolean
+  // 音质等级
+  audio_quality?: 'hires' | 'lossless' | 'lossy'
+  // 音质洗版分数
+  audio_quality_score?: number
+  // 格式化音频参数
+  audio_specs?: string
+  // 音频位深
+  bit_depth?: number
+  // 音频采样率
+  sample_rate?: number
+  // 音频码率
+  bitrate?: number
   // 名称（自动中英文）
   name: string
   // SXX-SXX
@@ -1064,8 +1330,8 @@ export interface User {
   id: number
   // 用户名称
   name: string
-  // 用户密码
-  password: string
+  // 用户密码仅用于写入，查询响应不返回该字段
+  password?: string
   // 用户邮箱
   email: string
   // 是否激活
@@ -1115,14 +1381,18 @@ export interface MediaStatistic {
   tv_count: number
   // 电视剧总集数，未获取时为 null
   episode_count: number | null
-  // 用户数量
-  user_count: number
+  // 音乐总数
+  music_count: number
+  // 用户数量，仪表板已改为展示音乐数量，仅保留接口字段兼容
+  user_count?: number
   // 本月新增电影数量
   movie_count_month: number
   // 本月新增电视剧数量
   tv_count_month: number
   // 本月新增剧集数量
   episode_count_month: number
+  // 本月新增音乐数量
+  music_count_month: number
 }
 
 // 后台进程
@@ -1460,7 +1730,7 @@ export interface StorageConf {
 export interface MediaServerConf {
   // 名称
   name: string
-  // 类型 emby/zspace/jellyfin/plex/trimemedia/ugreen
+  // 类型 emby/zspace/jellyfin/plex/trimemedia/ugreen/navidrome
   type: string
   // 配置
   config: { [key: string]: any }
@@ -1638,6 +1908,8 @@ export interface TransferForm {
   media_source?: MediaDataSource
   // 数据源原生ID
   media_id?: string | null
+  // 音乐实体类型
+  music_type?: Exclude<MusicEntityType, 'artist'> | null
   // 季号
   season?: number
   // 类型
@@ -1864,6 +2136,12 @@ export interface TorrentCacheItem {
   media_year?: string
   // 识别的媒体类型
   media_type?: string
+  // 识别结果的数据源
+  media_source?: MediaDataSource
+  // 数据源原生媒体 ID
+  media_id?: string
+  // 音乐实体类型
+  music_type?: Exclude<MusicEntityType, 'artist'>
   // 季集信息
   season_episode?: string
   // 资源信息
@@ -1922,6 +2200,38 @@ export interface RecognitionCacheData {
   shared_recognize_enabled: boolean
   // 缓存数据
   data: RecognitionCacheItem[]
+}
+
+// 音乐识别缓存项
+export interface MusicRecognitionCacheItem {
+  // 缓存键
+  key: string
+  // MusicBrainz ID，空字符串表示未识别
+  media_id?: string
+  // 识别后的曲名/专辑名
+  title: string
+  // 艺术家列表
+  artists?: string[]
+  // 所属专辑
+  album?: string
+  // 发行年份
+  year?: string | number
+  // 音乐实体类型：recording/album/artist
+  music_type?: string
+  // 封面图片地址
+  cover_url?: string
+}
+
+// 音乐识别缓存数据
+export interface MusicRecognitionCacheData {
+  // 缓存总数
+  count: number
+  // 已识别数量
+  recognized: number
+  // 未识别数量
+  unrecognized: number
+  // 缓存数据
+  data: MusicRecognitionCacheItem[]
 }
 
 // 订阅分享统计

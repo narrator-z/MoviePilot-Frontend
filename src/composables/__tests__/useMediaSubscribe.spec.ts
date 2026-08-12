@@ -9,6 +9,7 @@ import {
 } from '@/composables/useMediaSubscribe'
 import { getActiveRequestsCount } from '@/utils/requestOptimizer'
 import { fireEvent, screen, waitFor } from '@testing-library/vue'
+import { createMediaInfo } from '@tests/support/factories/media'
 import { createSubscribe, createSubscribeMovie, createSubscribeTv } from '@tests/support/factories/subscribe'
 import {
   createSubscribeHandler,
@@ -261,6 +262,90 @@ describe('useMediaSubscribe entry flows', () => {
     expect(mocks.doneProgress).toHaveBeenCalledOnce()
   })
 
+  it('creates an album subscription with its entity type and complete track count', async () => {
+    const media = createMediaInfo({
+      media_id: 'release-group-1',
+      music_type: 'album',
+      source: 'musicbrainz',
+      title: '叶惠美',
+      tmdb_id: undefined,
+      total_tracks: 11,
+      type: '音乐',
+      year: '2003',
+    })
+    const created = vi.fn()
+    server.use(
+      createSubscribeHandler({ data: { id: 502 }, success: true }, 200, created),
+      defaultSubscribeConfigHandler('音乐', { show_edit_dialog: false }),
+    )
+    await renderSubscribeHarness({ media })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'primary' }))
+
+    await waitFor(() => expect(created).toHaveBeenCalledOnce())
+    expect(created.mock.calls[0][0]).toMatchObject({
+      media_id: 'release-group-1',
+      media_source: 'musicbrainz',
+      mediaid: 'musicbrainz:release-group-1',
+      music_type: 'album',
+      name: '叶惠美',
+      season: null,
+      total_tracks: 11,
+      type: '音乐',
+      year: '2003',
+    })
+  })
+
+  it('creates a recording subscription without its album track count', async () => {
+    const media = createMediaInfo({
+      media_id: 'recording-1',
+      music_type: 'recording',
+      source: 'musicbrainz',
+      title: '晴天',
+      tmdb_id: undefined,
+      total_tracks: 11,
+      type: '音乐',
+      year: '2003',
+    })
+    const created = vi.fn()
+    server.use(
+      createSubscribeHandler({ data: { id: 503 }, success: true }, 200, created),
+      defaultSubscribeConfigHandler('音乐', { show_edit_dialog: false }),
+    )
+    await renderSubscribeHarness({ media })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'primary' }))
+
+    await waitFor(() => expect(created).toHaveBeenCalledOnce())
+    expect(created.mock.calls[0][0]).toMatchObject({
+      media_id: 'recording-1',
+      media_source: 'musicbrainz',
+      music_type: 'recording',
+      name: '晴天',
+      type: '音乐',
+    })
+    expect(created.mock.calls[0][0]).not.toHaveProperty('total_tracks')
+  })
+
+  it('does not create a subscription for an artist browsing entity', async () => {
+    const media = createMediaInfo({
+      media_id: 'artist-1',
+      music_type: 'artist',
+      source: 'musicbrainz',
+      title: '周杰伦',
+      tmdb_id: undefined,
+      type: '音乐',
+    })
+    const created = vi.fn()
+    server.use(createSubscribeHandler({ data: { id: 503 }, success: true }, 200, created))
+    await renderSubscribeHarness({ media })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'primary' }))
+
+    expect(created).not.toHaveBeenCalled()
+    expect(mocks.startProgress).not.toHaveBeenCalled()
+  })
+
   it('creates an AniList subscription without promoting its auxiliary TMDB ID', async () => {
     const media = createSubscribeTv({
       anilist_id: 154587,
@@ -464,6 +549,37 @@ describe('useMediaSubscribe entry flows', () => {
     await waitFor(() => expect(deleted).toHaveBeenCalledOnce())
     expect((deleted.mock.calls[0][0] as URL).searchParams.get('season')).toBe('2')
     expect(screen.getByTestId('season-map')).toHaveTextContent('"2":false')
+  })
+
+  it('queries and cancels music subscriptions with their entity type', async () => {
+    const media = createMediaInfo({
+      media_id: 'release-group-1',
+      music_type: 'album',
+      source: 'musicbrainz',
+      title: '叶惠美',
+      tmdb_id: undefined,
+      type: '音乐',
+    })
+    const queried = vi.fn()
+    const deleted = vi.fn()
+    server.use(
+      querySubscribeByMediaHandler(
+        'musicbrainz:release-group-1',
+        createSubscribe({ id: 801, music_type: 'album', type: '音乐' }),
+        200,
+        url => queried(url),
+      ),
+      deleteSubscribeByMediaHandler('musicbrainz:release-group-1', { success: true }, 200, url => deleted(url)),
+    )
+    await renderSubscribeHarness({ isSubscribed: true, media })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'check' }))
+    await waitFor(() => expect(screen.getByTestId('check-result')).toHaveTextContent('subscribed'))
+    expect((queried.mock.calls[0][0] as URL).searchParams.get('music_type')).toBe('album')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'remove' }))
+    await waitFor(() => expect(deleted).toHaveBeenCalledOnce())
+    expect((deleted.mock.calls[0][0] as URL).searchParams.get('music_type')).toBe('album')
   })
 
   it('aligns visible seasons while preserving hidden subscriptions', async () => {

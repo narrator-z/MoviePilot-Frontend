@@ -1,13 +1,15 @@
 <script lang="ts" setup>
 import api from '@/api'
-import type { MediaDataSource, MediaInfo } from '@/api/types'
+import type { MediaDataSource, MediaInfo, MusicEntityType } from '@/api/types'
 import { useI18n } from 'vue-i18n'
+import { isMusicMediaSource } from '@/utils/mediaId'
 
 const { t } = useI18n()
 
 // 定义输入变量
 const props = defineProps<{
   type?: MediaDataSource
+  musicTypes?: MusicEntityType[]
 }>()
 
 interface MediaSelectorItem {
@@ -21,6 +23,8 @@ interface MediaSelectorItem {
   poster: string
   // 媒体类型
   type?: string
+  // 音乐实体类型
+  music_type?: MusicEntityType
 }
 
 // update:modelValue 事件
@@ -61,6 +65,7 @@ async function searchMedias() {
     const result: MediaInfo[] = await api.get('media/search', {
       params: {
         title: searchKeyword,
+        type: isMusicMediaSource(props.type) ? 'music' : 'media',
         page: 1,
         count: 20,
         source: props.type,
@@ -72,6 +77,9 @@ async function searchMedias() {
 
     // 赋值
     for (const item of result) {
+      if (props.musicTypes?.length && item.music_type && !props.musicTypes.includes(item.music_type)) {
+        continue
+      }
       const mediaId =
         item.media_id ||
         item.tmdb_id?.toString() ||
@@ -79,12 +87,17 @@ async function searchMedias() {
         item.bangumi_id?.toString() ||
         item.anilist_id?.toString()
       if (!mediaId) continue
+      const musicAlbum = item.music_type === 'album' || item.album === item.title ? undefined : item.album
       items.value.push({
         id: mediaId,
-        poster: getW500Image(item.poster_path),
+        poster: getW500Image(item.cover_url || item.poster_path),
         type: item.type,
+        music_type: item.music_type,
         title: item.year ? `${item.title}（${item.year}）` : item.title || '',
-        overview: `<span class="text-primary">${item.type}</span> ${item.overview}`,
+        overview:
+          item.type === '音乐'
+            ? `<span class="text-primary">${item.type}</span> ${[item.artist, musicAlbum].filter(Boolean).join(' · ')}`
+            : `<span class="text-primary">${item.type}</span> ${item.overview || ''}`,
       })
     }
   } catch (e) {

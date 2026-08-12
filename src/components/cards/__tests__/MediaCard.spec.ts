@@ -4,7 +4,12 @@ import { clearCachedMediaSubscribeStatuses } from '@/utils/mediaStatusCache'
 import { fireEvent, waitFor } from '@testing-library/vue'
 import { createMediaInfo } from '@tests/support/factories/media'
 import { mediaExistsHandler } from '@tests/support/msw/handlers/media'
-import { querySubscribeByMediaHandler, subscribeListHandler } from '@tests/support/msw/handlers/subscribe'
+import {
+  createSubscribeHandler,
+  defaultSubscribeConfigHandler,
+  querySubscribeByMediaHandler,
+  subscribeListHandler,
+} from '@tests/support/msw/handlers/subscribe'
 import { server } from '@tests/support/msw/server'
 import { renderWithProviders } from '@tests/support/render'
 import { HttpResponse, http } from 'msw'
@@ -27,7 +32,9 @@ vi.mock('@/router', () => ({
 }))
 
 const API_BASE_URL = 'http://localhost/api/v1/'
-const siteListUrl = new URL('site/', API_BASE_URL).href
+const movieSiteListUrl = new URL('site/media/movie', API_BASE_URL).href
+const tvSiteListUrl = new URL('site/media/tv', API_BASE_URL).href
+const musicSiteListUrl = new URL('site/media/music', API_BASE_URL).href
 const selectedSitesUrl = new URL('system/setting/public/IndexerSites', API_BASE_URL).href
 
 let intersectionObservers: IntersectionObserverMock[] = []
@@ -186,7 +193,16 @@ function getStatusObservers() {
 }
 
 /** 安装站点列表及已选站点的搜索请求处理器。 */
-function installSearchHandlers(sites: Record<string, unknown>[], selected: number[]) {
+function installSearchHandlers(
+  sites: Record<string, unknown>[],
+  selected: number[],
+  mediaType: 'movie' | 'music' | 'tv' = 'movie',
+) {
+  const siteListUrl = {
+    movie: movieSiteListUrl,
+    music: musicSiteListUrl,
+    tv: tvSiteListUrl,
+  }[mediaType]
   server.use(
     http.get(siteListUrl, () => HttpResponse.json(sites)),
     http.get(selectedSitesUrl, () => HttpResponse.json({ data: { value: selected }, success: true })),
@@ -348,8 +364,130 @@ describe('MediaCard', () => {
     await waitFor(() => expect(mocks.routerPush).toHaveBeenCalledWith({ path, query }))
   })
 
+  it('opens music detail and skips media-library existence checks', async () => {
+    const media = createMediaInfo({
+      artist: '周杰伦',
+      media_id: 'recording-1',
+      mediaid_prefix: 'musicbrainz',
+      source: 'musicbrainz',
+      title: '晴天',
+      tmdb_id: undefined,
+      type: '音乐',
+    })
+    const subscribeRequest = vi.fn<(url: URL) => void>()
+    const existsRequest = vi.fn<(url: URL) => void>()
+    server.use(
+      querySubscribeByMediaHandler('musicbrainz:recording-1', {}, 200, subscribeRequest),
+      mediaExistsHandler({ data: { item: {} }, success: false }, 200, existsRequest),
+    )
+
+    const { container } = await renderCard(media)
+    getStatusObservers()[0]?.trigger()
+    await waitFor(() => expect(subscribeRequest).toHaveBeenCalledOnce())
+    expect((subscribeRequest.mock.calls[0][0] as URL).searchParams.get('music_type')).toBe('recording')
+    expect(existsRequest).not.toHaveBeenCalled()
+
+    await fireEvent.mouseEnter(getHoverArea(container))
+    await waitFor(() => expect(getCard(container)).toHaveClass('app-hover-lift-card--hovering'))
+    await fireEvent.click(getCard(container))
+
+    await waitFor(() =>
+      expect(mocks.routerPush).toHaveBeenCalledWith({
+        path: '/music/detail',
+        query: {
+          source: 'musicbrainz',
+          mediaid: 'recording-1',
+          title: '晴天',
+        },
+      }),
+    )
+  })
+
+  it.each([
+    ['TheAudioDB', 'theaudiodb', 'album-2109619', 'Parachutes'],
+    ['豆瓣音乐', 'doubanmusic', '1401853', '范特西'],
+  ])(
+    'keeps %s identity for explore-card detail, subscribe, and resource actions',
+    async (_label, source, mediaId, title) => {
+      const media = createMediaInfo({
+        artist: 'Artist',
+        media_id: mediaId,
+        mediaid_prefix: source,
+        music_type: 'album',
+        poster_path: undefined,
+        source,
+        title,
+        tmdb_id: undefined,
+        total_tracks: 10,
+        type: '音乐',
+      })
+      const subscribeRequest = vi.fn<(url: URL) => void>()
+      const created = vi.fn<(payload: Record<string, unknown>) => void>()
+      server.use(
+        querySubscribeByMediaHandler(`${source}:${mediaId}`, {}, 200, subscribeRequest),
+        createSubscribeHandler({ data: { id: 101 }, success: true }, 200, created),
+        defaultSubscribeConfigHandler('音乐', { show_edit_dialog: false }),
+      )
+      installSearchHandlers([], [21], 'music')
+
+      const { container } = await renderCard(media)
+      getStatusObservers()[0]?.trigger()
+      await waitFor(() => expect(subscribeRequest).toHaveBeenCalledOnce())
+      expect(subscribeRequest.mock.calls[0][0].searchParams.get('music_type')).toBe('album')
+
+      await fireEvent.mouseEnter(getHoverArea(container))
+      await waitFor(() => expect(getCard(container)).toHaveClass('app-hover-lift-card--hovering'))
+      await fireEvent.click(getCard(container))
+      await waitFor(() =>
+        expect(mocks.routerPush).toHaveBeenCalledWith({
+          path: '/music/album',
+          query: { mediaid: mediaId, source, title },
+        }),
+      )
+
+      await fireEvent.click(getActionButtons(container).at(-1) as HTMLButtonElement)
+      await waitFor(() => expect(created).toHaveBeenCalledOnce())
+      expect(created.mock.calls[0][0]).toMatchObject({
+        media_id: mediaId,
+        media_source: source,
+        music_type: 'album',
+        name: title,
+        type: '音乐',
+      })
+
+      await fireEvent.click(getSearchButton(container))
+      await waitFor(() =>
+        expect(mocks.routerPush).toHaveBeenCalledWith({
+          path: '/resource',
+          query: expect.objectContaining({
+            keyword: `${source}:${mediaId}`,
+            music_type: 'album',
+            sites: '21',
+            type: '音乐',
+          }),
+        }),
+      )
+    },
+  )
+
+  it('uses an album placeholder instead of the movie fallback image for music without a cover', async () => {
+    const media = createMediaInfo({
+      media_id: 'recording-2',
+      source: 'musicbrainz',
+      poster_path: undefined,
+      title: '无封面歌曲',
+      tmdb_id: undefined,
+      type: '音乐',
+    })
+
+    const { container } = await renderCard(media)
+
+    expect(container.querySelector('.media-card-placeholder .v-icon')).not.toBeNull()
+    expect(container.querySelector('img[src*="no-image"]')).toBeNull()
+  })
+
   it('routes directly to resource search when no active sites are available', async () => {
-    installSearchHandlers([], [3, 5])
+    installSearchHandlers([], [3, 5], 'tv')
     const media = createMediaInfo({ season: 4, title: '直接搜索剧集', tmdb_id: 9501, type: '电视剧' })
     const { container } = await renderCard(media)
 
@@ -375,7 +513,7 @@ describe('MediaCard', () => {
 
   it('falls back to global search when site settings cannot provide active selections', async () => {
     server.use(
-      http.get(siteListUrl, () => HttpResponse.json({ message: 'temporary failure' }, { status: 500 })),
+      http.get(movieSiteListUrl, () => HttpResponse.json({ message: 'temporary failure' }, { status: 500 })),
       http.get(selectedSitesUrl, () => HttpResponse.json({ success: true })),
     )
     const media = createMediaInfo({ title: '站点失败搜索', tmdb_id: 9503 })
@@ -434,7 +572,7 @@ describe('MediaCard', () => {
 
   it('opens active sites with an empty selection when the saved setting fails', async () => {
     server.use(
-      http.get(siteListUrl, () =>
+      http.get(movieSiteListUrl, () =>
         HttpResponse.json([
           {
             domain: 'fallback.example',
@@ -587,7 +725,7 @@ describe('MediaCard', () => {
     expect(dialogProps).toMatchObject({ subscribedSeasons: expected })
   })
 
-  it('updates image badges on load and falls back after an image error', async () => {
+  it('updates image badges on load and shows the typed placeholder after an image error', async () => {
     const media = createMediaInfo({
       poster_path: '/original/poster.jpg',
       source: 'themoviedb',
@@ -617,20 +755,13 @@ describe('MediaCard', () => {
     await waitFor(() =>
       expect(container.querySelector('.media-card-title')?.parentElement).not.toHaveStyle({ display: 'none' }),
     )
-    await waitFor(() => expect(requests.some(request => request.src.includes('no-image'))).toBe(true))
+    await waitFor(() => expect(container.querySelector('.media-card-placeholder')).not.toBeNull())
     expect(getCard(container)).not.toHaveAttribute('data-glass-optical-mode')
-
-    const fallbackRequest = requests.find(request => request.src.includes('no-image'))
-    fallbackRequest?.load()
-    await waitFor(() => expect(getCard(container)).toHaveClass('ring-1'))
-    expect(getCard(container)).not.toHaveAttribute('data-glass-optical-mode')
-
-    fallbackRequest?.reveal()
-    await Promise.resolve()
-    expect(getCard(container)).not.toHaveAttribute('data-glass-optical-mode')
+    expect(getCard(container)).not.toHaveClass('ring-1')
+    expect(requests.some(request => request.src.includes('no-image'))).toBe(false)
   })
 
-  it('keeps placeholder-only cards inside the renderer after the image loads', async () => {
+  it('keeps placeholder-only cards inside the renderer without issuing an image request', async () => {
     const requests: ControlledImageRequest[] = []
     const { container } = await renderWithProviders(MediaCard, {
       props: { media: createMediaInfo({ poster_path: undefined, tmdb_id: 9553 }), width: '9rem' },
@@ -638,10 +769,28 @@ describe('MediaCard', () => {
       global: { stubs: { VImg: createControlledImageStub(requests) } },
     })
 
-    requests[0].load()
-
-    await waitFor(() => expect(getCard(container)).toHaveClass('ring-1'))
+    expect(requests).toHaveLength(0)
+    expect(container.querySelector('.media-card-placeholder')).not.toBeNull()
+    expect(getCard(container)).not.toHaveClass('ring-1')
     expect(getCard(container)).not.toHaveAttribute('data-glass-optical-mode')
+  })
+
+  it('excludes music cards from the renderer after the cover finishes revealing', async () => {
+    const requests: ControlledImageRequest[] = []
+    const { container } = await renderWithProviders(MediaCard, {
+      props: {
+        media: createMediaInfo({ cover_url: 'https://example.com/cover.jpg', poster_path: undefined, type: '音乐' }),
+        width: '9rem',
+      },
+      initialState: { user: { superUser: true } },
+      global: { stubs: { VImg: createControlledImageStub(requests) } },
+    })
+
+    expect(requests).toHaveLength(1)
+    requests[0].load()
+    requests[0].reveal()
+
+    await waitFor(() => expect(getCard(container)).toHaveAttribute('data-glass-optical-mode', 'excluded'))
   })
 
   it('ignores a previous poster load after the card is reused for another media item', async () => {
@@ -675,14 +824,48 @@ describe('MediaCard', () => {
     await waitFor(() => expect(getCard(container)).toHaveAttribute('data-glass-optical-mode', 'excluded'))
   })
 
-  it('renders the AniList source badge after the poster loads', async () => {
-    const media = createMediaInfo({
-      anilist_id: 154588,
-      poster_path: '/original/anilist.jpg',
-      source: 'anilist',
-      tmdb_id: undefined,
-      type: '电视剧',
-    })
+  it.each([
+    [
+      'AniList',
+      createMediaInfo({
+        anilist_id: 154588,
+        poster_path: '/original/anilist.jpg',
+        source: 'anilist',
+        tmdb_id: undefined,
+        type: '电视剧',
+      }),
+      'mdi-alpha-a-circle',
+      '#02a9ff',
+    ],
+    [
+      'TheAudioDB',
+      createMediaInfo({
+        cover_url: 'https://example.com/theaudiodb.jpg',
+        media_id: 'album-2109619',
+        music_type: 'album',
+        poster_path: undefined,
+        source: 'theaudiodb',
+        tmdb_id: undefined,
+        type: '音乐',
+      }),
+      'mdi-music-box-multiple',
+      '#35a7a0',
+    ],
+    [
+      '豆瓣音乐',
+      createMediaInfo({
+        cover_url: 'https://example.com/doubanmusic.jpg',
+        media_id: '1401853',
+        music_type: 'album',
+        poster_path: undefined,
+        source: 'doubanmusic',
+        tmdb_id: undefined,
+        type: '音乐',
+      }),
+      'mdi-music-circle',
+      '#00b51d',
+    ],
+  ])('renders the %s source badge after the cover loads', async (_label, media, icon, color) => {
     const VImgStub = defineComponent({
       name: 'VImg',
       emits: ['load'],
@@ -694,8 +877,8 @@ describe('MediaCard', () => {
       },
     })
     const VIconStub = {
-      props: ['icon'],
-      template: '<i :data-icon="icon" />',
+      props: ['color', 'icon'],
+      template: '<i :data-color="color" :data-icon="icon" />',
     }
     const { container } = await renderWithProviders(MediaCard, {
       props: { media, width: '9rem' },
@@ -705,7 +888,7 @@ describe('MediaCard', () => {
 
     await fireEvent.click(container.querySelector('[aria-label="图片加载成功"]') as HTMLElement)
 
-    await waitFor(() => expect(container.querySelector('[data-icon="mdi-alpha-a-circle"]')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector(`[data-icon="${icon}"]`)).toHaveAttribute('data-color', color))
   })
 
   it('hides search and subscribe actions when the user lacks both permissions', async () => {

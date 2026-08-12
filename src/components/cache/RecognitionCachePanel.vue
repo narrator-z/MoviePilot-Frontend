@@ -3,17 +3,26 @@ import { useToast } from 'vue-toastification'
 import { useDisplay } from 'vuetify'
 import { useI18n } from 'vue-i18n'
 import api from '@/api'
-import type { ApiResponse, RecognitionCacheData, RecognitionCacheItem } from '@/api/types'
+import type {
+  ApiResponse,
+  MusicRecognitionCacheData,
+  MusicRecognitionCacheItem,
+  RecognitionCacheData,
+  RecognitionCacheItem,
+} from '@/api/types'
 import { useConfirm } from '@/composables/useConfirm'
 import ProgressiveCardGrid from '@/components/misc/ProgressiveCardGrid.vue'
+import MusicRecognitionCachePanel from '@/components/cache/MusicRecognitionCachePanel.vue'
 import { useGlobalSettingsStore } from '@/stores'
 import { getDisplayImageUrl } from '@/utils/imageUtils'
 
 type RecognitionStatusFilter = 'all' | 'recognized' | 'unrecognized'
+type RecognitionTypeFilter = 'all' | 'media' | 'music'
 type InfiniteScrollStatus = 'ok' | 'empty' | 'loading' | 'error'
 
 const MOBILE_CACHE_PAGE_SIZE = 20
-const RECOGNITION_CACHE_ENDPOINT = 'tmdb/cache'
+const TMDB_CACHE_ENDPOINT = 'tmdb/cache'
+const MUSIC_CACHE_ENDPOINT = 'music/cache'
 
 const { t } = useI18n()
 const display = useDisplay()
@@ -23,20 +32,28 @@ const globalSettingsStore = useGlobalSettingsStore()
 
 const isMobile = computed(() => display.smAndDown.value)
 const recognitionSourceName = computed(() => t('setting.cache.recognitionSource.themoviedb'))
+const musicSourceName = computed(() => t('setting.cache.recognitionSource.musicbrainz'))
 const recognitionIdLabel = computed(() => t('setting.cache.tmdbId'))
-const recognitionFilterPlaceholder = computed(() =>
-  t('setting.cache.filterRecognitionCache', { source: recognitionSourceName.value }),
-)
+const recognitionFilterPlaceholder = computed(() => t('setting.cache.filterAllRecognitionCache'))
 const loading = ref(false)
 const searchFilter = ref('')
 const statusFilter = ref<RecognitionStatusFilter>('all')
+// 类型筛选：全部 / 影视（TMDB）/ 音乐（MusicBrainz），切换后对应表格切换显示
+const typeFilter = ref<RecognitionTypeFilter>('all')
 const selectedItems = ref<string[]>([])
+const selectedMusicItems = ref<string[]>([])
 const cacheData = ref<RecognitionCacheData>({
   count: 0,
   recognized: 0,
   unrecognized: 0,
   shared_recognized: 0,
   shared_recognize_enabled: false,
+  data: [],
+})
+const musicCacheData = ref<MusicRecognitionCacheData>({
+  count: 0,
+  recognized: 0,
+  unrecognized: 0,
   data: [],
 })
 const mobileVisibleCount = ref(MOBILE_CACHE_PAGE_SIZE)
@@ -48,6 +65,21 @@ const statusOptions = computed(() => [
   { title: t('setting.cache.recognizedOnly'), value: 'recognized' },
   { title: t('setting.cache.unrecognizedOnly'), value: 'unrecognized' },
 ])
+
+const typeOptions = computed(() => [
+  { title: t('setting.cache.recognitionTypeOptions.all'), value: 'all' },
+  { title: t('setting.cache.recognitionTypeOptions.media'), value: 'media' },
+  { title: t('setting.cache.recognitionTypeOptions.music'), value: 'music' },
+])
+
+// 影视与音乐缓存统计汇总展示
+const totalCount = computed(() => cacheData.value.count + musicCacheData.value.count)
+const recognizedCount = computed(() => cacheData.value.recognized + musicCacheData.value.recognized)
+const unrecognizedCount = computed(() => cacheData.value.unrecognized + musicCacheData.value.unrecognized)
+const totalSelectedCount = computed(() => selectedItems.value.length + selectedMusicItems.value.length)
+
+const showMediaSection = computed(() => typeFilter.value !== 'music')
+const showMusicSection = computed(() => typeFilter.value !== 'media')
 
 const tableHeaders = computed(() => [
   { title: '', key: 'data-table-select', sortable: false, width: '48px' },
@@ -67,6 +99,21 @@ const filteredData = computed(() => {
       [item.key, item.title, item.year, getRecognitionId(item)].some(value => value.toLowerCase().includes(keyword))
     const matchesStatus =
       statusFilter.value === 'all' || (statusFilter.value === 'recognized' ? isRecognized(item) : !isRecognized(item))
+    return matchesKeyword && matchesStatus
+  })
+})
+
+const filteredMusicData = computed(() => {
+  const keyword = searchFilter.value.trim().toLowerCase()
+  return musicCacheData.value.data.filter(item => {
+    const matchesKeyword =
+      !keyword ||
+      [item.key, item.title, item.album, item.media_id, getMusicArtistText(item), String(item.year ?? '')].some(value =>
+        (value || '').toLowerCase().includes(keyword),
+      )
+    const matchesStatus =
+      statusFilter.value === 'all' ||
+      (statusFilter.value === 'recognized' ? isMusicRecognized(item) : !isMusicRecognized(item))
     return matchesKeyword && matchesStatus
   })
 })
@@ -96,12 +143,15 @@ function loadMoreMobileCache({ done }: { done: (status: InfiniteScrollStatus) =>
   done(mobileHasMore.value ? 'ok' : 'empty')
 }
 
-/** 加载 TMDB 主识别缓存列表。 */
+/** 并行加载影视（TMDB）与音乐（MusicBrainz）识别缓存。 */
 async function loadCacheData(showSuccess = false) {
   const requestId = ++cacheLoadRequestId
   try {
     loading.value = true
-    const response = (await api.get(RECOGNITION_CACHE_ENDPOINT)) as unknown as ApiResponse<RecognitionCacheData>
+    const [response, musicResponse] = (await Promise.all([
+      api.get(TMDB_CACHE_ENDPOINT),
+      api.get(MUSIC_CACHE_ENDPOINT),
+    ])) as unknown as [ApiResponse<RecognitionCacheData>, ApiResponse<MusicRecognitionCacheData>]
     if (requestId !== cacheLoadRequestId) return
     const responseData = response.data ?? {
       count: 0,
@@ -117,7 +167,15 @@ async function loadCacheData(showSuccess = false) {
       shared_recognize_enabled: responseData.shared_recognize_enabled ?? false,
       data: responseData.data.map(item => ({ ...item, recognition_id: getRecognitionId(item) })),
     }
+    const musicData = musicResponse.data ?? { count: 0, recognized: 0, unrecognized: 0, data: [] }
+    musicCacheData.value = {
+      ...musicData,
+      data: (musicData.data ?? []).map(item => ({ ...item })),
+    }
     selectedItems.value = selectedItems.value.filter(key => cacheData.value.data.some(item => item.key === key))
+    selectedMusicItems.value = selectedMusicItems.value.filter(key =>
+      musicCacheData.value.data.some(item => item.key === key),
+    )
     resetMobilePagination()
     if (showSuccess) $toast.success(t('setting.cache.listRefreshSuccess'))
   } catch (error) {
@@ -129,22 +187,34 @@ async function loadCacheData(showSuccess = false) {
   }
 }
 
-/** 清空全部 TMDB 主识别缓存。 */
+/** 清空当前类型筛选范围内的识别缓存，全部类型时影视与音乐一并清空。 */
 async function clearAllCache() {
+  const clearTargets: string[] = []
+  if (typeFilter.value !== 'music') clearTargets.push(TMDB_CACHE_ENDPOINT)
+  if (typeFilter.value !== 'media') clearTargets.push(MUSIC_CACHE_ENDPOINT)
+  const content =
+    typeFilter.value === 'all'
+      ? t('setting.cache.recognitionClearAllConfirm')
+      : t('setting.cache.recognitionClearConfirm', {
+          source: typeFilter.value === 'media' ? recognitionSourceName.value : musicSourceName.value,
+        })
   const confirmed = await createConfirm({
     type: 'warn',
     title: t('common.confirm'),
-    content: t('setting.cache.recognitionClearConfirm', { source: recognitionSourceName.value }),
+    content,
   })
   if (!confirmed) return
 
   try {
     loading.value = true
-    const response = (await api.delete(RECOGNITION_CACHE_ENDPOINT)) as unknown as ApiResponse
-    if (!response.success) throw new Error(response.message)
-    $toast.success(response.message || t('setting.cache.clearSuccess'))
+    const responses = (await Promise.all(
+      clearTargets.map(endpoint => api.delete(endpoint)),
+    )) as unknown as ApiResponse[]
+    if (responses.some(item => !item.success)) throw new Error(responses.find(item => !item.success)?.message)
+    $toast.success(t('setting.cache.clearSuccess'))
     await loadCacheData()
     selectedItems.value = []
+    selectedMusicItems.value = []
   } catch (error) {
     console.error(error)
     $toast.error(t('setting.cache.clearFailed'))
@@ -153,28 +223,36 @@ async function clearAllCache() {
   }
 }
 
-/** 请求 TMDB 接口删除指定识别缓存。 */
+/** 请求接口删除指定影视识别缓存。 */
 async function deleteCacheItem(key: string) {
-  const response = (await api.delete(
-    `${RECOGNITION_CACHE_ENDPOINT}/${encodeURIComponent(key)}`,
-  )) as unknown as ApiResponse
+  const response = (await api.delete(`${TMDB_CACHE_ENDPOINT}/${encodeURIComponent(key)}`)) as unknown as ApiResponse
   if (!response.success) throw new Error(response.message)
 }
 
-/** 删除桌面端表格中选中的识别缓存。 */
+/** 请求接口删除指定音乐识别缓存。 */
+async function deleteMusicCacheItem(key: string) {
+  const response = (await api.delete(`${MUSIC_CACHE_ENDPOINT}/${encodeURIComponent(key)}`)) as unknown as ApiResponse
+  if (!response.success) throw new Error(response.message)
+}
+
+/** 删除两个表格中选中的识别缓存。 */
 async function deleteSelectedItems() {
-  if (selectedItems.value.length === 0) {
+  if (totalSelectedCount.value === 0) {
     $toast.warning(t('setting.cache.selectDeleteWarning'))
     return
   }
 
-  const deleteCount = selectedItems.value.length
+  const deleteCount = totalSelectedCount.value
   try {
     loading.value = true
-    await Promise.all(selectedItems.value.map(deleteCacheItem))
+    await Promise.all([
+      ...selectedItems.value.map(deleteCacheItem),
+      ...selectedMusicItems.value.map(deleteMusicCacheItem),
+    ])
     $toast.success(t('setting.cache.deleteSelectedSuccess', { count: deleteCount }))
     await loadCacheData()
     selectedItems.value = []
+    selectedMusicItems.value = []
   } catch (error) {
     console.error(error)
     $toast.error(t('setting.cache.deleteSelectedFailed'))
@@ -183,11 +261,26 @@ async function deleteSelectedItems() {
   }
 }
 
-/** 删除单条识别缓存。 */
+/** 删除单条影视识别缓存。 */
 async function deleteSingleItem(item: RecognitionCacheItem) {
   try {
     loading.value = true
     await deleteCacheItem(item.key)
+    $toast.success(t('setting.cache.deleteSuccess'))
+    await loadCacheData()
+  } catch (error) {
+    console.error(error)
+    $toast.error(t('setting.cache.deleteFailed'))
+  } finally {
+    loading.value = false
+  }
+}
+
+/** 删除单条音乐识别缓存，由音乐表格组件上抛事件触发。 */
+async function deleteMusicItem(key: string) {
+  try {
+    loading.value = true
+    await deleteMusicCacheItem(key)
     $toast.success(t('setting.cache.deleteSuccess'))
     await loadCacheData()
   } catch (error) {
@@ -212,10 +305,20 @@ function getRecognitionId(item: RecognitionCacheItem): string {
   return item.tmdb_id ? String(item.tmdb_id) : ''
 }
 
-/** 判断识别缓存条目是否包含有效媒体 ID。 */
+/** 判断影视识别缓存条目是否包含有效媒体 ID。 */
 function isRecognized(item: RecognitionCacheItem): boolean {
   const recognitionId = getRecognitionId(item)
   return Boolean(recognitionId && recognitionId !== '0')
+}
+
+/** 判断音乐识别缓存条目是否包含有效媒体 ID。 */
+function isMusicRecognized(item: MusicRecognitionCacheItem): boolean {
+  return Boolean(item.media_id)
+}
+
+/** 获取音乐缓存条目的艺术家展示文本，参与关键词搜索。 */
+function getMusicArtistText(item: MusicRecognitionCacheItem): string {
+  return (item.artists || []).join(' / ')
 }
 
 /** 获取移动端识别缓存卡片的稳定渲染 key。 */
@@ -246,7 +349,7 @@ onMounted(() => {
   void loadCacheData()
 })
 
-watch([searchFilter, statusFilter], () => {
+watch([searchFilter, statusFilter, typeFilter], () => {
   resetMobilePagination()
 })
 </script>
@@ -258,21 +361,21 @@ watch([searchFilter, statusFilter], () => {
         <div class="cache-panel-stat cache-panel-stat--primary">
           <VIcon icon="mdi-database-outline" :size="isMobile ? 32 : 22" />
           <div>
-            <strong>{{ cacheData.count }}</strong>
+            <strong>{{ totalCount }}</strong>
             <span>{{ t('setting.cache.totalCount') }}</span>
           </div>
         </div>
         <div class="cache-panel-stat cache-panel-stat--success">
           <VIcon icon="mdi-check-decagram-outline" :size="isMobile ? 32 : 22" />
           <div>
-            <strong>{{ cacheData.recognized }}</strong>
+            <strong>{{ recognizedCount }}</strong>
             <span>{{ t('setting.cache.recognized') }}</span>
           </div>
         </div>
         <div v-if="!isMobile || cacheData.shared_recognize_enabled" class="cache-panel-stat cache-panel-stat--warning">
           <VIcon icon="mdi-help-circle-outline" size="22" />
           <div>
-            <strong>{{ cacheData.unrecognized }}</strong>
+            <strong>{{ unrecognizedCount }}</strong>
             <span>{{ t('setting.cache.unrecognized') }}</span>
           </div>
         </div>
@@ -294,13 +397,13 @@ watch([searchFilter, statusFilter], () => {
           icon
           variant="text"
           color="warning"
-          :disabled="selectedItems.length === 0"
+          :disabled="totalSelectedCount === 0"
           :loading="loading"
           @click="deleteSelectedItems"
         >
           <VIcon icon="mdi-delete-sweep-outline" />
           <VTooltip activator="parent" location="bottom">
-            {{ t('setting.cache.deleteSelected') }} ({{ selectedItems.length }})
+            {{ t('setting.cache.deleteSelected') }} ({{ totalSelectedCount }})
           </VTooltip>
         </VBtn>
         <VBtn icon variant="text" color="error" :loading="loading" @click="clearAllCache">
@@ -321,6 +424,18 @@ watch([searchFilter, statusFilter], () => {
         :density="isMobile ? 'comfortable' : 'compact'"
         :single-line="isMobile"
         clearable
+        hide-details
+      />
+      <VSelect
+        v-model="typeFilter"
+        class="cache-panel-filter"
+        :label="isMobile ? undefined : t('setting.cache.recognitionType')"
+        :placeholder="isMobile ? t('setting.cache.recognitionType') : undefined"
+        :items="typeOptions"
+        prepend-inner-icon="mdi-shape-outline"
+        variant="outlined"
+        :density="isMobile ? 'comfortable' : 'compact'"
+        :single-line="isMobile"
         hide-details
       />
       <VSelect
@@ -346,138 +461,160 @@ watch([searchFilter, statusFilter], () => {
       </VBtn>
     </div>
 
-    <template v-if="isMobile">
-      <VInfiniteScroll
-        v-if="mobileVisibleData.length > 0 || loading"
-        :key="mobileInfiniteKey"
-        mode="intersect"
-        side="end"
-        :items="mobileVisibleData"
-        class="recognition-cache-mobile-scroll"
-        @load="loadMoreMobileCache"
-      >
-        <template #loading>
-          <div class="cache-panel-load-state">
-            <VProgressCircular indeterminate color="primary" size="22" width="3" />
-            <span>{{ t('setting.cache.loadingMore') }}</span>
-          </div>
-        </template>
-
-        <template #empty />
-
-        <ProgressiveCardGrid
-          v-if="mobileVisibleData.length > 0"
-          :items="mobileVisibleData"
-          :columns="1"
-          :gap="10"
-          :estimated-item-height="152"
-          :overscan-rows="5"
-          :get-item-key="getRecognitionCacheItemKey"
-        >
-          <template #default="{ item }">
-            <article class="recognition-cache-mobile-item">
-              <div class="recognition-cache-poster rounded-md">
-                <VImg v-if="getPosterUrl(item)" :src="getPosterUrl(item)" :alt="item.title || item.key" cover />
-                <VIcon v-else icon="mdi-image-off-outline" size="28" />
-              </div>
-
-              <div class="recognition-cache-mobile-item__content">
-                <div class="recognition-cache-mobile-item__title">
-                  {{ item.title || t('setting.cache.unrecognized') }}
-                </div>
-                <div class="recognition-cache-mobile-item__meta">
-                  <VChip size="x-small" variant="tonal" :color="getMediaTypeColor(item.media_type)">
-                    {{ getMediaTypeLabel(item.media_type) }}
-                  </VChip>
-                  <span v-if="item.year">{{ item.year }}</span>
-                  <span v-if="isRecognized(item)">{{ recognitionIdLabel }} #{{ getRecognitionId(item) }}</span>
-                </div>
-                <div class="recognition-cache-mobile-item__key">{{ item.key }}</div>
-              </div>
-
-              <VBtn
-                icon
-                size="small"
-                variant="text"
-                color="error"
-                :aria-label="t('common.delete')"
-                @click="deleteSingleItem(item)"
-              >
-                <VIcon icon="mdi-delete-outline" size="20" />
-              </VBtn>
-            </article>
-          </template>
-        </ProgressiveCardGrid>
-      </VInfiniteScroll>
-
-      <div v-else class="cache-panel-empty">
-        <VIcon icon="mdi-database-search-outline" size="42" />
-        <strong>{{ t('setting.cache.noRecognitionCache', { source: recognitionSourceName }) }}</strong>
-        <span>{{ t('setting.cache.noRecognitionCacheHint') }}</span>
+    <template v-if="showMediaSection">
+      <div v-if="typeFilter === 'all'" class="recognition-cache-section-title">
+        <VIcon icon="mdi-movie-search-outline" size="18" />
+        <span>{{ recognitionSourceName }}</span>
       </div>
-    </template>
 
-    <VDataTable
-      v-else
-      v-model="selectedItems"
-      class="recognition-cache-table"
-      :headers="tableHeaders"
-      :items="filteredData"
-      :loading="loading"
-      item-value="key"
-      show-select
-      hover
-      :items-per-page-text="t('common.itemsPerPage')"
-      :no-data-text="t('common.noDataText')"
-      :loading-text="t('common.loadingText')"
-    >
-      <template #item.poster="{ item }">
-        <div class="recognition-cache-table__poster rounded-md">
-          <VImg v-if="getPosterUrl(item)" :src="getPosterUrl(item)" :alt="item.title || item.key" cover />
-          <VIcon v-else icon="mdi-image-off-outline" />
-        </div>
-      </template>
+      <template v-if="isMobile">
+        <VInfiniteScroll
+          v-if="mobileVisibleData.length > 0 || loading"
+          :key="mobileInfiniteKey"
+          mode="intersect"
+          side="end"
+          :items="mobileVisibleData"
+          class="recognition-cache-mobile-scroll"
+          @load="loadMoreMobileCache"
+        >
+          <template #loading>
+            <div class="cache-panel-load-state">
+              <VProgressCircular indeterminate color="primary" size="22" width="3" />
+              <span>{{ t('setting.cache.loadingMore') }}</span>
+            </div>
+          </template>
 
-      <template #item.key="{ item }">
-        <div class="recognition-cache-table__key">{{ item.key }}</div>
-      </template>
+          <template #empty />
 
-      <template #item.result="{ item }">
-        <div class="recognition-cache-result">
-          <strong>{{ item.title || t('setting.cache.unrecognized') }}</strong>
-          <span v-if="item.year">{{ item.year }}</span>
-          <VChip size="x-small" variant="tonal" :color="getMediaTypeColor(item.media_type)">
-            {{ getMediaTypeLabel(item.media_type) }}
-          </VChip>
-        </div>
-      </template>
+          <ProgressiveCardGrid
+            v-if="mobileVisibleData.length > 0"
+            :items="mobileVisibleData"
+            :columns="1"
+            :gap="10"
+            :estimated-item-height="152"
+            :overscan-rows="5"
+            :get-item-key="getRecognitionCacheItemKey"
+          >
+            <template #default="{ item }">
+              <article class="recognition-cache-mobile-item">
+                <div class="recognition-cache-poster rounded-md">
+                  <VImg v-if="getPosterUrl(item)" :src="getPosterUrl(item)" :alt="item.title || item.key" cover />
+                  <VIcon v-else icon="mdi-image-off-outline" size="28" />
+                </div>
 
-      <template #item.recognition_id="{ item }">
-        <span v-if="isRecognized(item)" class="font-weight-medium">#{{ getRecognitionId(item) }}</span>
-        <span v-else class="text-medium-emphasis">-</span>
-      </template>
+                <div class="recognition-cache-mobile-item__content">
+                  <div class="recognition-cache-mobile-item__title">
+                    {{ item.title || t('setting.cache.unrecognized') }}
+                  </div>
+                  <div class="recognition-cache-mobile-item__meta">
+                    <VChip size="x-small" variant="tonal" :color="getMediaTypeColor(item.media_type)">
+                      {{ getMediaTypeLabel(item.media_type) }}
+                    </VChip>
+                    <span v-if="item.year">{{ item.year }}</span>
+                    <span v-if="isRecognized(item)">{{ recognitionIdLabel }} #{{ getRecognitionId(item) }}</span>
+                  </div>
+                  <div class="recognition-cache-mobile-item__key">{{ item.key }}</div>
+                </div>
 
-      <template #item.status="{ item }">
-        <VChip size="small" variant="tonal" :color="isRecognized(item) ? 'success' : 'warning'">
-          {{ getRecognitionStatusLabel(item) }}
-        </VChip>
-      </template>
+                <VBtn
+                  icon
+                  size="small"
+                  variant="text"
+                  color="error"
+                  :aria-label="t('common.delete')"
+                  @click="deleteSingleItem(item)"
+                >
+                  <VIcon icon="mdi-delete-outline" size="20" />
+                </VBtn>
+              </article>
+            </template>
+          </ProgressiveCardGrid>
+        </VInfiniteScroll>
 
-      <template #item.actions="{ item }">
-        <VBtn icon size="small" variant="text" color="error" @click="deleteSingleItem(item)">
-          <VIcon icon="mdi-delete-outline" size="18" />
-          <VTooltip activator="parent" location="start">{{ t('common.delete') }}</VTooltip>
-        </VBtn>
-      </template>
-
-      <template #no-data>
-        <div class="cache-panel-empty">
+        <div v-else class="cache-panel-empty">
           <VIcon icon="mdi-database-search-outline" size="42" />
           <strong>{{ t('setting.cache.noRecognitionCache', { source: recognitionSourceName }) }}</strong>
           <span>{{ t('setting.cache.noRecognitionCacheHint') }}</span>
         </div>
       </template>
-    </VDataTable>
+
+      <VDataTable
+        v-else
+        v-model="selectedItems"
+        class="recognition-cache-table"
+        :headers="tableHeaders"
+        :items="filteredData"
+        :loading="loading"
+        item-value="key"
+        show-select
+        hover
+        :items-per-page-text="t('common.itemsPerPage')"
+        :no-data-text="t('common.noDataText')"
+        :loading-text="t('common.loadingText')"
+      >
+        <template #item.poster="{ item }">
+          <div class="recognition-cache-table__poster rounded-md">
+            <VImg v-if="getPosterUrl(item)" :src="getPosterUrl(item)" :alt="item.title || item.key" cover />
+            <VIcon v-else icon="mdi-image-off-outline" />
+          </div>
+        </template>
+
+        <template #item.key="{ item }">
+          <div class="recognition-cache-table__key">{{ item.key }}</div>
+        </template>
+
+        <template #item.result="{ item }">
+          <div class="recognition-cache-result">
+            <strong>{{ item.title || t('setting.cache.unrecognized') }}</strong>
+            <span v-if="item.year">{{ item.year }}</span>
+            <VChip size="x-small" variant="tonal" :color="getMediaTypeColor(item.media_type)">
+              {{ getMediaTypeLabel(item.media_type) }}
+            </VChip>
+          </div>
+        </template>
+
+        <template #item.recognition_id="{ item }">
+          <span v-if="isRecognized(item)" class="font-weight-medium">#{{ getRecognitionId(item) }}</span>
+          <span v-else class="text-medium-emphasis">-</span>
+        </template>
+
+        <template #item.status="{ item }">
+          <VChip size="small" variant="tonal" :color="isRecognized(item) ? 'success' : 'warning'">
+            {{ getRecognitionStatusLabel(item) }}
+          </VChip>
+        </template>
+
+        <template #item.actions="{ item }">
+          <VBtn icon size="small" variant="text" color="error" @click="deleteSingleItem(item)">
+            <VIcon icon="mdi-delete-outline" size="18" />
+            <VTooltip activator="parent" location="start">{{ t('common.delete') }}</VTooltip>
+          </VBtn>
+        </template>
+
+        <template #no-data>
+          <div class="cache-panel-empty">
+            <VIcon icon="mdi-database-search-outline" size="42" />
+            <strong>{{ t('setting.cache.noRecognitionCache', { source: recognitionSourceName }) }}</strong>
+            <span>{{ t('setting.cache.noRecognitionCacheHint') }}</span>
+          </div>
+        </template>
+      </VDataTable>
+    </template>
+
+    <template v-if="showMusicSection">
+      <div v-if="typeFilter === 'all'" class="recognition-cache-section-title">
+        <VIcon icon="mdi-music-note-outline" size="18" />
+        <span>{{ musicSourceName }}</span>
+      </div>
+
+      <MusicRecognitionCachePanel
+        :items="filteredMusicData"
+        :loading="loading"
+        :selected-items="selectedMusicItems"
+        @update:selected-items="selectedMusicItems = $event"
+        @delete="deleteMusicItem"
+      />
+    </template>
   </section>
 </template>
 
@@ -492,6 +629,16 @@ watch([searchFilter, statusFilter], () => {
   gap: 16px;
   min-block-size: 0;
   overflow-y: auto;
+}
+
+.recognition-cache-section-title {
+  display: flex;
+  align-items: center;
+  color: rgba(var(--v-theme-on-surface), 0.72);
+  font-size: 14px;
+  font-weight: 700;
+  gap: 8px;
+  margin-block-start: 4px;
 }
 
 .cache-panel-toolbar {
@@ -563,7 +710,7 @@ watch([searchFilter, statusFilter], () => {
 .cache-panel-filters {
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.35fr);
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.28fr) minmax(150px, 0.28fr);
 }
 
 .cache-panel-filters :deep(.v-field) {

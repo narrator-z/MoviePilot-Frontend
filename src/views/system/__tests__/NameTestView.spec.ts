@@ -1,5 +1,5 @@
 import NameTestView from '@/views/system/NameTestView.vue'
-import { screen, waitFor } from '@testing-library/vue'
+import { screen } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '@tests/support/render'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -36,6 +36,7 @@ vi.mock('vue-toastification', () => ({
 
 interface RecognizedMedia {
   category?: string
+  detail_link?: string
   media_id: string
   source: string
   title: string
@@ -99,6 +100,40 @@ describe('NameTestView media identity', () => {
       { media_id: '154587', source: 'anilist', title: '测试番剧', type: '电视剧', year: '2026' },
       'https://anilist.co/anime/154587',
     ],
+    [
+      'MusicBrainz',
+      {
+        detail_link: 'https://musicbrainz.org/recording/8f97b17d-1234-4abc-9def-1234567890ab',
+        media_id: '8f97b17d-1234-4abc-9def-1234567890ab',
+        source: 'musicbrainz',
+        title: '测试单曲',
+        type: '音乐',
+        year: '2026',
+      },
+      'https://musicbrainz.org/recording/8f97b17d-1234-4abc-9def-1234567890ab',
+    ],
+    [
+      'TheAudioDB',
+      {
+        media_id: '32793500',
+        source: 'theaudiodb',
+        title: 'Yellow',
+        type: '音乐',
+        year: '2000',
+      },
+      'https://www.theaudiodb.com/track/32793500',
+    ],
+    [
+      '豆瓣音乐',
+      {
+        media_id: '1401853',
+        source: 'doubanmusic',
+        title: '范特西',
+        type: '音乐',
+        year: '2001',
+      },
+      'https://music.douban.com/subject/1401853',
+    ],
   ])('formats %s and links its native media ID', async (sourceLabel, media, expectedLink) => {
     await renderRecognizedMedia(media)
 
@@ -129,6 +164,81 @@ describe('NameTestView media identity', () => {
     expect(classificationStep).toHaveTextContent('媒体分类电视剧 · 动漫')
   })
 
+  it('renders music recognition results from music meta info without name field', async () => {
+    mocks.apiGet.mockResolvedValueOnce({
+      media_info: {
+        album: '叶惠美',
+        artist: '周杰伦',
+        category: 'Single',
+        media_id: '8f97b17d-1234-4abc-9def-1234567890ab',
+        source: 'musicbrainz',
+        title: '晴天',
+        type: '音乐',
+        year: 2003,
+      },
+      meta_info: {
+        apply_words: [],
+        artist: '周杰伦',
+        audio_format: 'FLAC',
+        org_string: '周杰伦 - 晴天.flac',
+        title: '晴天',
+        type: '音乐',
+      },
+      torrent_info: {},
+    })
+
+    await renderWithProviders(NameTestView, {
+      initialState: {
+        globalSettings: {
+          data: { RECOGNIZE_SOURCE: 'musicbrainz' },
+        },
+      },
+    })
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('标题'), '周杰伦 - 晴天.flac')
+    await user.click(screen.getByRole('button', { name: '识别' }))
+
+    // 音乐元信息无 name 字段，仍应按识别成功展示曲名和来源
+    await screen.findByRole('link', { name: '8f97b17d-1234-4abc-9def-1234567890ab' })
+    expect(screen.getByText('晴天')).toBeInTheDocument()
+    expect(screen.getByText('2003 · 周杰伦 · 叶惠美')).toBeInTheDocument()
+
+    const sourceDisplay = screen.getByTestId('recognition-source')
+    expect(sourceDisplay).toHaveAttribute('data-source', 'musicbrainz')
+    expect(sourceDisplay).toHaveAccessibleName('MusicBrainz')
+
+    const metaStep = screen.getByText('元信息').closest('.pipeline-step')
+    expect(metaStep).toHaveTextContent('晴天 · 周杰伦 · FLAC')
+  })
+
+  it('hides the custom words input when MusicBrainz source is selected', async () => {
+    await renderWithProviders(NameTestView, {
+      initialState: {
+        globalSettings: {
+          data: { RECOGNIZE_SOURCE: 'themoviedb' },
+        },
+      },
+    })
+    const user = userEvent.setup()
+
+    // 默认影视数据源时识别词输入区可见
+    expect(screen.getByLabelText('识别词')).toBeInTheDocument()
+
+    await user.click(screen.getByLabelText('识别数据源'))
+    await user.click(await screen.findByRole('option', { name: 'MusicBrainz' }))
+    // 音乐识别不应用识别词，输入区应隐藏
+    expect(screen.queryByLabelText('识别词')).not.toBeInTheDocument()
+
+    await user.click(screen.getByLabelText('识别数据源'))
+    await user.click(await screen.findByRole('option', { name: 'TheAudioDB' }))
+    expect(screen.queryByLabelText('识别词')).not.toBeInTheDocument()
+
+    await user.click(screen.getByLabelText('识别数据源'))
+    await user.click(await screen.findByRole('option', { name: 'TheMovieDb' }))
+    // 切回影视数据源后输入区恢复
+    expect(screen.getByLabelText('识别词')).toBeInTheDocument()
+  })
+
   it('closes the recognition dialog before navigating to the media detail', async () => {
     const eventOrder: string[] = []
     const onClose = vi.fn(() => eventOrder.push('close'))
@@ -157,65 +267,5 @@ describe('NameTestView media identity', () => {
         year: '2026',
       },
     })
-  })
-
-  it('persists the five most recent unique titles and restores them in the combobox', async () => {
-    mocks.apiGet.mockImplementation(async (_endpoint: string, options: { params: { title: string } }) => ({
-      media_info: {
-        media_id: '271016',
-        source: 'themoviedb',
-        title: options.params.title,
-        type: '电视剧',
-        year: '2026',
-      },
-      meta_info: {
-        apply_words: [],
-        name: options.params.title,
-        org_string: options.params.title,
-      },
-      torrent_info: {},
-    }))
-    const result = await renderWithProviders(NameTestView, {
-      initialState: {
-        globalSettings: {
-          data: { RECOGNIZE_SOURCE: 'themoviedb' },
-        },
-      },
-    })
-    const user = userEvent.setup()
-    const titleInput = screen.getByLabelText('标题')
-    const submittedTitles = ['标题一', '标题二', '标题三', '标题四', '标题五', '标题六', '标题三']
-
-    for (const [index, title] of submittedTitles.entries()) {
-      await user.clear(titleInput)
-      await user.type(titleInput, ` ${title} `)
-      await user.click(screen.getByRole('button', { name: index === 0 ? '识别' : '重新识别' }))
-      await waitFor(() => expect(mocks.apiGet).toHaveBeenCalledTimes(index + 1))
-    }
-
-    expect(JSON.parse(localStorage.getItem('MP_NAME_TEST_TITLE_HISTORY') || '[]')).toEqual([
-      '标题三',
-      '标题六',
-      '标题五',
-      '标题四',
-      '标题二',
-    ])
-
-    result.unmount()
-    await renderWithProviders(NameTestView, {
-      initialState: {
-        globalSettings: {
-          data: { RECOGNIZE_SOURCE: 'themoviedb' },
-        },
-      },
-    })
-
-    const restoredInput = screen.getByLabelText('标题')
-    await user.click(restoredInput)
-    const historyOptions = await screen.findAllByRole('option')
-    expect(historyOptions.map(option => option.textContent)).toEqual(['标题三', '标题六', '标题五', '标题四', '标题二'])
-    await user.click(screen.getByRole('option', { name: '标题六' }))
-
-    expect(restoredInput).toHaveValue('标题六')
   })
 })

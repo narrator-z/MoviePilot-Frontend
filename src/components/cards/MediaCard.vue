@@ -6,7 +6,6 @@ let mediaCardIdSeed = 0
 </script>
 
 <script lang="ts" setup>
-import noImage from '@images/no-image.jpeg'
 import { getDisplayImageUrl, getLogoUrl } from '@/utils/imageUtils'
 import api from '@/api'
 import { formatRating } from '@/@core/utils/formatters'
@@ -27,6 +26,7 @@ import {
   getCachedMediaSubscribeStatus,
   setCachedMediaExistsStatus,
 } from '@/utils/mediaStatusCache'
+import { buildMusicDetailRoute, getMusicKey } from '@/utils/music'
 
 const SearchSiteDialog = defineAsyncComponent(() => import('@/components/dialog/SearchSiteDialog.vue'))
 
@@ -113,6 +113,12 @@ const sourceIconDict: { [key: string]: any } = {
   bangumi: getLogoUrl('bangumi'),
 }
 
+const musicSourceIconDict: Record<string, { color: string; icon: string }> = {
+  musicbrainz: { color: '#eb743b', icon: 'mdi-music-circle' },
+  theaudiodb: { color: '#35a7a0', icon: 'mdi-music-box-multiple' },
+  doubanmusic: { color: '#00b51d', icon: 'mdi-music-circle' },
+}
+
 // 绑定MediaCard元素
 const mediaCardRef = ref<HTMLElement | null>(null)
 
@@ -150,10 +156,11 @@ function openSearchSiteDialog() {
   )
 }
 
-// 查询所有站点
+// 查询与当前媒体类型兼容的站点
 async function querySites() {
   try {
-    const data: Site[] = await api.get('site/')
+    const mediaType = props.media?.type === '电视剧' ? 'tv' : props.media?.type === '音乐' ? 'music' : 'movie'
+    const data: Site[] = await api.get(`site/media/${mediaType}`)
 
     // 过滤站点，只有启用的站点才显示
     allSites.value = data.filter(item => item.is_active)
@@ -178,7 +185,8 @@ function getMediaId() {
 }
 
 function getSubscribeStatusKey(season: number | null = props.media?.season ?? null) {
-  return `${getMediaId()}::${season ?? 'all'}`
+  const identity = props.media?.type === '音乐' ? getMusicKey(props.media) : getMediaId()
+  return `${identity}::${season ?? 'all'}`
 }
 
 function getExistsStatusKey() {
@@ -194,6 +202,11 @@ function getExistsStatusKey() {
 }
 
 function isSameSubscribeMedia(subscribe: Subscribe) {
+  if (props.media?.type === '音乐') {
+    const expectedMusicType = props.media.music_type ?? 'recording'
+    const subscribeMusicType = subscribe.music_type ?? 'recording'
+    if (subscribeMusicType !== expectedMusicType) return false
+  }
   const mediaId = getMediaId()
   if (subscribe.media_source && subscribe.media_id) {
     const prefix = subscribe.media_source === 'themoviedb' ? 'tmdb' : subscribe.media_source
@@ -211,6 +224,7 @@ function isSameSubscribeMedia(subscribe: Subscribe) {
 function getChipColor(type: string) {
   if (type === '电影') return 'border-blue-500 bg-blue-600'
   else if (type === '电视剧') return ' bg-indigo-500 border-indigo-600'
+  else if (type === '音乐') return 'border-pink-500 bg-pink-600'
   else return 'border-purple-600 bg-purple-600'
 }
 
@@ -258,6 +272,7 @@ async function querySubscribedSeasons() {
 
 // 查询当前媒体是否已入库
 async function handleCheckExists() {
+  if (props.media?.type === '音乐') return
   try {
     const exists = await getCachedMediaExistsStatus(getExistsStatusKey(), async () => {
       const result: { [key: string]: any } = await api.get('mediaserver/exists', {
@@ -296,7 +311,9 @@ function goMediaDetail(isHovering = false) {
   if (isHovering) {
     resetMediaCardDetailState()
 
-    if (props.media?.collection_id) {
+    if (props.media?.type === '音乐') {
+      router.push(buildMusicDetailRoute(props.media))
+    } else if (props.media?.collection_id) {
       // 跳转到合集列表
       router.push({
         path: `/browse/tmdb/collection/${props.media?.collection_id}`,
@@ -379,6 +396,7 @@ function handleSearch() {
       title: props.media?.title,
       year: props.media?.year,
       season: props.media?.season,
+      ...(props.media?.type === '音乐' ? { music_type: props.media.music_type ?? 'recording' } : {}),
       sites: selectedSites.value.join(','),
     },
   })
@@ -420,23 +438,42 @@ function setupIntersectionObserver() {
   }
 }
 
+// 媒体占位图标：电影/电视剧/音乐各自使用对应图标，缺失封面时统一渲染图标 + 底色占位
+const placeholderIcon = computed(() => {
+  switch (props.media?.type) {
+    case '音乐':
+      return 'mdi-album'
+    case '电视剧':
+      return 'mdi-television-classic'
+    case '电影':
+    default:
+      return 'mdi-movie-open-outline'
+  }
+})
+
 // 计算图片地址
 const getImgUrl: Ref<string> = computed(() => {
-  if (imageLoadError.value) return noImage
-  const url = props.media?.poster_path?.replace('original', 'w500') ?? noImage
+  if (imageLoadError.value) return ''
+  if (props.media?.type === '音乐') {
+    // 音乐封面优先使用 cover_url（ListenBrainz/MusicBrainz 统计接口返回），回退到 poster_path
+    const musicCover = props.media?.cover_url || props.media?.poster_path
+    if (!musicCover) return ''
+    return getDisplayImageUrl(musicCover, globalSettings.GLOBAL_IMAGE_CACHE)
+  }
+  const url = props.media?.poster_path?.replace('original', 'w500')
+  if (!url) return ''
   return getDisplayImageUrl(url, globalSettings.GLOBAL_IMAGE_CACHE)
 })
 
 const hasLoadedRealPoster = computed(
-  () =>
-    Boolean(props.media?.poster_path) && isImageLoaded.value && hasCompletedPosterReveal.value && !imageLoadError.value,
+  () => Boolean(getImgUrl.value) && isImageLoaded.value && hasCompletedPosterReveal.value && !imageLoadError.value,
 )
 
 /** 为当前图片实例绑定不可跨媒体复用的成功与失败回调。 */
 const imageRequest = computed(() => {
   const revision = imageRequestRevision.value
   const src = getImgUrl.value
-  const usesFallback = imageLoadError.value || !props.media?.poster_path
+  const usesFallback = !src
 
   return {
     handleError: () => {
@@ -501,7 +538,7 @@ watch(isSubscribed, subscribed => {
 })
 
 watch(
-  [() => props.media, () => props.media?.poster_path],
+  [() => props.media, () => props.media?.poster_path, () => props.media?.cover_url],
   ([media], [previousMedia]) => {
     imageRequestRevision.value += 1
     resetPosterRevealState()
@@ -555,8 +592,12 @@ onBeforeUnmount(() => {
           }"
           @click.stop="handleMediaCardClick(hover.isHovering)"
         >
+          <div v-if="!getImgUrl" class="media-card-placeholder d-flex align-center justify-center">
+            <VIcon :icon="placeholderIcon" size="64" color="medium-emphasis" />
+          </div>
           <VImg
             :key="imageRequest.key"
+            v-else
             aspect-ratio="2/3"
             :src="imageRequest.src"
             class="object-cover aspect-w-2 aspect-h-3"
@@ -630,6 +671,12 @@ onBeforeUnmount(() => {
             v-if="!isMediaCardActive(hover.isHovering) && isImageLoaded && props.media?.source && !imageLoadError"
           >
             <VIcon v-if="props.media?.source === 'anilist'" color="#02a9ff" icon="mdi-alpha-a-circle" size="24" />
+            <VIcon
+              v-else-if="musicSourceIconDict[props.media?.source]"
+              :color="musicSourceIconDict[props.media.source].color"
+              :icon="musicSourceIconDict[props.media.source].icon"
+              size="24"
+            />
             <VImg v-else cover :src="sourceIconDict[props.media?.source]" class="shadow-lg" />
           </VAvatar>
         </VCard>
@@ -639,6 +686,13 @@ onBeforeUnmount(() => {
 </template>
 <style scoped>
 .media-card-hover-area {
+  inline-size: 100%;
+}
+
+.media-card-placeholder {
+  aspect-ratio: 2 / 3;
+  background: rgba(var(--v-theme-on-surface), 0.08);
+  block-size: 100%;
   inline-size: 100%;
 }
 

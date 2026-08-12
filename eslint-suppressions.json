@@ -157,16 +157,6 @@
       "count": 2
     }
   },
-  "src/components/cards/UserCard.vue": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
-  "src/components/cards/__tests__/SubscribeCard.spec.ts": {
-    "sonarjs/super-linear-regex": {
-      "count": 2
-    }
-  },
   "src/components/dialog/AboutDialog.vue": {
     "@typescript-eslint/no-explicit-any": {
       "count": 8
@@ -238,16 +228,6 @@
   "src/components/dialog/NotificationChannelInfoDialog.vue": {
     "@typescript-eslint/no-explicit-any": {
       "count": 4
-    }
-  },
-  "src/components/dialog/PasskeyDialog.vue": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
-  "src/components/dialog/PluginMarketSettingDialog.vue": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 3
     }
   },
   "src/components/dialog/RcloneConfigDialog.vue": {
@@ -335,11 +315,6 @@
       "count": 4
     },
     "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
-  "src/components/dialog/UserAddEditDialog.vue": {
-    "@typescript-eslint/no-explicit-any": {
       "count": 1
     }
   },
@@ -683,11 +658,6 @@
       "count": 1
     }
   },
-  "src/pages/login.vue": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "src/pages/resource.vue": {
     "@typescript-eslint/no-explicit-any": {
       "count": 6
@@ -696,7 +666,7 @@
       "count": 3
     },
     "sonarjs/no-duplicated-branches": {
-      "count": 3
+      "count": 2
     }
   },
   "src/pages/setting.vue": {
@@ -871,10 +841,7 @@
   },
   "src/views/setting/AccountSettingDirectory.vue": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 9
-    },
-    "no-prototype-builtins": {
-      "count": 1
+      "count": 8
     },
     "sonarjs/super-linear-regex": {
       "count": 1
@@ -891,51 +858,21 @@
   "src/views/setting/AccountSettingRule.vue": {
     "@typescript-eslint/no-explicit-any": {
       "count": 14
-    },
-    "prefer-const": {
-      "count": 1
     }
   },
   "src/views/setting/AccountSettingSearch.vue": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 12
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    },
-    "no-empty": {
-      "count": 1
-    },
-    "no-prototype-builtins": {
-      "count": 1
-    },
-    "sonarjs/no-ignored-exceptions": {
-      "count": 1
+      "count": 11
     }
   },
   "src/views/setting/AccountSettingSite.vue": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 6
-    },
-    "no-prototype-builtins": {
-      "count": 1
+      "count": 5
     }
   },
   "src/views/setting/AccountSettingSubscribe.vue": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 12
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    },
-    "no-empty": {
-      "count": 1
-    },
-    "no-prototype-builtins": {
-      "count": 1
-    },
-    "sonarjs/no-ignored-exceptions": {
-      "count": 1
+      "count": 11
     }
   },
   "src/views/setting/AccountSettingSystem.vue": {
@@ -1033,14 +970,6 @@
   "src/views/system/WordsView.vue": {
     "@typescript-eslint/no-explicit-any": {
       "count": 4
-    }
-  },
-  "src/views/user/UserProfileView.vue": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
     }
   },
   "src/views/workflow/WorkflowShareView.vue": {
