@@ -703,9 +703,6 @@ onMounted(() => {
 })
 
 onActivated(() => {
-  // KeepAlive 重新激活并刷新订阅数据后，清除残留的移动端剧集标题筛选，
-  // 避免旧数据被新数据替换后筛选仍指向已不存在的剧集（见 keep-alive 刷新测试）。
-  mobileSelectedFilterValue.value = ALL_MOBILE_FILTER_VALUE
   if (!loading.value) {
     getSubscribes()
   }
