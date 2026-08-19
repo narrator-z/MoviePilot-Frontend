@@ -40,21 +40,22 @@ const { api, pluginApi } = createApiClients({
   hooks: {
     markServerOnline: globalOfflineStatus.markServerOnline,
     reportConnectionFailure: globalOfflineStatus.reportNetworkError,
-    onForbidden: () => {
+    // fork：403 仅来自边缘 WAF（如 Cloudflare）或安全拒绝，非登录态失效；
+    // 后端已将全部认证失败统一为 401，故 403 绝不触发登出，仅拒绝请求即可。
+    onForbidden: () => {},
+    onClearCredentials: () => useAuthStore().clearToken(),
+    onUnauthorized: (error: ApiRequestError) => {
       const authStore = useAuthStore()
-      // 未登录的 403 可能是登录或 MFA 流程的一部分，不应触发全局登出跳转。
-      if (!authStore.token) return
-      authStore.logout()
-      void router.push('/login')
-    },
-    onUnauthorized: () => {
-      const authStore = useAuthStore()
-      if (!authStore.token) {
-        // 无 token 的 401（如登录页验证失败）交给调用方自行展示；
-        // 但刚登出后的在途请求属于同一会话失效，继续静默。
+      const retried = (error.config as (AxiosRequestConfig & { __authRetried?: boolean }) | undefined)?.__authRetried
+      // 未重试的 401（如登录页校验失败、无 token）交给调用方展示，不登出。
+      if (!retried) {
         return Date.now() - sessionExpiredAt < SESSION_EXPIRED_SUPPRESSION_MS
       }
-      // 后端重启会使旧 token 作废：只提示一次并统一登出，不逐条弹英文错误。
+      // 已重试仍 401：Bearer 与资源 Cookie 均失效，属会话失效。
+      // 同一会话失效的连带请求在窗口内静默，避免并发刷屏。
+      if (Date.now() - sessionExpiredAt < SESSION_EXPIRED_SUPPRESSION_MS) {
+        return true
+      }
       sessionExpiredAt = Date.now()
       authStore.logout()
       toast.error(i18n.global.t('common.sessionExpired'))

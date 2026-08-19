@@ -21,6 +21,8 @@ declare module 'axios' {
     feedback?: ApiFeedbackMode
     skipNavigationCancellation?: boolean
     skipConnectionTracking?: boolean
+    // fork：401 重试标记，避免清除 Bearer 后资源 Cookie 兜底重试再次触发重试循环。
+    __authRetried?: boolean
   }
 }
 
@@ -83,6 +85,8 @@ export interface ApiClientHooks {
   onForbidden?(error: ApiRequestError): void
   /** 返回 true 表示认证失效已由应用层统一接管，请求层不再弹出逐条错误提示。 */
   onUnauthorized?(error: ApiRequestError): boolean | void
+  /** fork：401 时由应用层清除本地 Bearer，请求层随后用资源 Cookie 兜底重试。 */
+  onClearCredentials?(): void
   reportConnectionFailure?(reason: 'network-error' | 'timeout' | 'server-unreachable'): void
 }
 
@@ -190,8 +194,10 @@ export function createApiClients(options: CreateApiClientsOptions = {}): {
   pluginApi: PluginApiClient
 } {
   const { hooks, notifier, resolveFallbackMessage, setupInstance, ...axiosConfig } = options
-  const api = axios.create(axiosConfig)
-  const pluginApi = axios.create(axiosConfig)
+  // fork：始终携带资源令牌 Cookie，使后端 verify_token 的资源 Cookie 兜底机制生效，
+  // 避免 Bearer 失效时仅凭 Cookie 仍可保住会话、被误判未登录而强制登出。
+  const api = axios.create({ ...axiosConfig, withCredentials: true })
+  const pluginApi = axios.create({ ...axiosConfig, withCredentials: true })
 
   // 技术类失败提示的去重缓存：同一消息在窗口内只提示一次，避免后端异常时大量并发请求刷屏。
   // 两个客户端共用同一份缓存，保证重复提示被整体收敛。
@@ -290,9 +296,28 @@ function installResponseInterceptors(
       }
       if (response?.status === 403) hooks?.onForbidden?.(error)
 
-      // 认证失效（如后端重启导致 token 作废）由应用层统一登出跳转，
-      // 避免并发请求逐条弹出 "Not authenticated" 等英文提示刷屏。
-      if (response?.status === 401 && hooks?.onUnauthorized?.(error) === true) {
+      // 认证失效（如后端重启导致 Bearer 作废）：fork 行为——先清除本地过期 Bearer，
+      // 请求层用资源 Cookie 兜底重试一次；仅当重试仍 401（无有效 Cookie / 未登录）
+      // 才交由应用层统一登出，避免被误判未登录而强制登出。
+      if (response?.status === 401) {
+        const requestConfig = original?.config as
+          | (AxiosRequestConfig & { __authRetried?: boolean })
+          | undefined
+        if (requestConfig && !requestConfig.__authRetried) {
+          hooks?.onClearCredentials?.()
+          const retryConfig: AxiosRequestConfig = { ...requestConfig, __authRetried: true }
+          try {
+            const retryResp = await instance(retryConfig)
+            return retryResp
+          } catch (retryErr) {
+            // 重试仍失败：重试的响应拦截器已按 onUnauthorized 处理（含登出/提示），直接透传。
+            return Promise.reject(retryErr)
+          }
+        }
+        // 已重试过仍失败或无法重试：交应用层钩子统一处理，按返回值决定是否提示。
+        if (hooks?.onUnauthorized?.(error) !== true) {
+          notifyFailure(requestConfig?.feedback, notifier, error.message, technicalErrorDedup)
+        }
         return Promise.reject(error)
       }
 
